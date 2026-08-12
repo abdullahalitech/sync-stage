@@ -1,0 +1,100 @@
+@import 'tailwindcss';
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: #0b0b12;
+  color: #e5e7eb;
+}
+
+/* Thin custom scrollbars for the chat / queue panes */
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Floating emoji reactions */
+@keyframes float-up {
+  0% {
+    transform: translateY(0) scale(0.6);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(-10%) scale(1);
+  }
+  100% {
+    transform: translateY(-320px) scale(1.4);
+    opacity: 0;
+  }
+}
+.animate-float-up {
+  animation: float-up 3s ease-out forwards;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-in {
+  animation: fade-in 0.25s ease-out both;
+}
+
+/* Active speaker glow ring on voice-stage avatars */
+@keyframes voice-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.6);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(52, 211, 153, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+  }
+}
+.voice-speaking {
+  outline: 2px solid #34d399;
+  animation: voice-pulse 1.2s ease-out infinite;
+}
+
+/* "Now playing" equalizer bars in the queue */
+@keyframes eq {
+  from {
+    height: 4px;
+  }
+  to {
+    height: 14px;
+  }
+}
+
+/* Slow spinning gradient glow used on the landing hero */
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-spin-slow {
+  animation: spin-slow 18s linear infinite;
+}
