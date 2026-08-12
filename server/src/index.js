@@ -11,6 +11,9 @@ import { roomStore } from './lib/roomStore.js';
 async function bootstrap() {
   const app = express();
 
+  // Railway terminates TLS at a proxy; needed for secure cookies / peer proxied mode.
+  app.set('trust proxy', 1);
+
   app.use(cors({ origin: env.clientOrigins, credentials: true }));
   app.use(express.json());
 

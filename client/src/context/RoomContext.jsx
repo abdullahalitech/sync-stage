@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { socket, emitAck } from '../lib/socket.js';
+import { socket, emitAck, ensureSocketConnected } from '../lib/socket.js';
 import { EVENTS } from '../lib/events.js';
 
 const RoomContext = createContext(null);
@@ -253,9 +253,28 @@ export function RoomProvider({ children }) {
     };
   }, [connected]);
 
-  const ensureConnected = useCallback(() => {
-    if (!socket.connected) socket.connect();
-  }, []);
+  const createRoom = useCallback(
+    async (roomName, userName) => {
+      setError('');
+      setKicked(false);
+      try {
+        await ensureSocketConnected();
+      } catch (err) {
+        const message = err?.message || 'Could not connect to the server.';
+        setError(message);
+        return { ok: false, error: message };
+      }
+      const res = await emitAck(EVENTS.ROOM_CREATE, { roomName, userName });
+      if (res?.ok) {
+        setYou(res.you);
+        applyRoomSnapshot(res.room);
+      } else {
+        setError(res?.error || 'Could not create room');
+      }
+      return res;
+    },
+    [applyRoomSnapshot],
+  );
 
   const resetRoomState = useCallback(() => {
     setRoom(null);
@@ -271,29 +290,17 @@ export function RoomProvider({ children }) {
     setRoomMode('DJ');
   }, []);
 
-  // ---- Actions ----
-  const createRoom = useCallback(
-    async (roomName, userName) => {
-      setError('');
-      setKicked(false);
-      ensureConnected();
-      const res = await emitAck(EVENTS.ROOM_CREATE, { roomName, userName });
-      if (res?.ok) {
-        setYou(res.you);
-        applyRoomSnapshot(res.room);
-      } else {
-        setError(res?.error || 'Could not create room');
-      }
-      return res;
-    },
-    [applyRoomSnapshot, ensureConnected],
-  );
-
   const joinRoom = useCallback(
     async (roomCode, userName) => {
       setError('');
       setKicked(false);
-      ensureConnected();
+      try {
+        await ensureSocketConnected();
+      } catch (err) {
+        const message = err?.message || 'Could not connect to the server.';
+        setError(message);
+        return { ok: false, error: message };
+      }
       const res = await emitAck(EVENTS.ROOM_JOIN, { roomCode, userName });
       if (res?.ok) {
         setYou(res.you);
@@ -303,7 +310,7 @@ export function RoomProvider({ children }) {
       }
       return res;
     },
-    [applyRoomSnapshot, ensureConnected],
+    [applyRoomSnapshot],
   );
 
   const leaveRoom = useCallback(() => {
