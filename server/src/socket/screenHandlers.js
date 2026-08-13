@@ -37,15 +37,36 @@ function notifySharerViewerReady(io, room, viewerSocketId, peerId) {
  * WebRTC screen-share signaling (one active sharer per room).
  */
 export function registerScreenHandlers(io, socket) {
-  socket.on(EVENTS.SCREEN_SHARE_START, ({ peerId } = {}, ack) => {
-    const room = roomOf(socket);
-    if (!room || !peerId) {
-      ack?.({ ok: false, error: 'Invalid screen share request.' });
+  socket.on(EVENTS.SCREEN_SHARE_START, ({ peerId, roomCode } = {}, ack) => {
+    let room = roomOf(socket);
+    const peerIdStr = peerId != null ? String(peerId).trim() : '';
+
+    if (!room && roomCode) {
+      room = roomStore.getRoom(String(roomCode).toUpperCase().trim());
+    }
+
+    if (!room) {
+      ack?.({
+        ok: false,
+        error: 'You are not in a room. Refresh the page and rejoin.',
+      });
       return;
     }
+
+    if (!peerIdStr) {
+      ack?.({
+        ok: false,
+        error: 'Could not connect to the screen-share relay. Try again.',
+      });
+      return;
+    }
+
     const user = room.users.get(socket.id);
     if (!user) {
-      ack?.({ ok: false, error: 'You are not in this room.' });
+      ack?.({
+        ok: false,
+        error: 'Session expired. Refresh the page and rejoin the room.',
+      });
       return;
     }
 
@@ -58,7 +79,7 @@ export function registerScreenHandlers(io, socket) {
     room.screenShare = {
       userId: socket.id,
       userName: user.name,
-      peerId: String(peerId),
+      peerId: peerIdStr,
     };
     emitScreenShare(io, room);
 

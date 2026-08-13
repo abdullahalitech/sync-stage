@@ -69,6 +69,8 @@ export default function VideoPlayer({
     emitSeek,
     emitEnded,
     screenShare,
+    room,
+    rejoinRoom,
   } = useRoom();
 
   const playerRef = useRef(null);
@@ -114,7 +116,7 @@ export default function VideoPlayer({
     enableRemoteAudio,
     startShare,
     stopShare,
-  } = useScreenShare(you, screenShare);
+  } = useScreenShare(you, screenShare, room?.code, rejoinRoom);
 
   const screenActive = screenVisible;
 

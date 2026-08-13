@@ -43,6 +43,19 @@ export function RoomProvider({ children }) {
   const timedFloatTimers = useRef(new Map());
   const offsetRef = useRef(0); // authoritative offset for tight loops (no re-render)
   const latencyRef = useRef(0); // one-way latency in seconds
+  const roomSessionRef = useRef({ code: null, userName: null, active: false });
+
+  const rememberRoomSession = useCallback((code, userName) => {
+    roomSessionRef.current = {
+      code: code ? String(code).toUpperCase() : null,
+      userName: userName || null,
+      active: !!(code && userName),
+    };
+  }, []);
+
+  const clearRoomSession = useCallback(() => {
+    roomSessionRef.current = { code: null, userName: null, active: false };
+  }, []);
 
   /** Server clock "now" in ms, corrected for measured offset. */
   const getServerNow = useCallback(() => Date.now() + offsetRef.current, []);
@@ -96,7 +109,24 @@ export function RoomProvider({ children }) {
 
   // ---- Wire up socket listeners once ----
   useEffect(() => {
-    const onConnect = () => setConnected(true);
+    const onConnect = async () => {
+      setConnected(true);
+      const sess = roomSessionRef.current;
+      if (!sess.active || !sess.code || !sess.userName) return;
+      try {
+        const res = await emitAck(EVENTS.ROOM_JOIN, {
+          roomCode: sess.code,
+          userName: sess.userName,
+        });
+        if (res?.ok) {
+          setYou(res.you);
+          applyRoomSnapshot(res.room);
+          setError('');
+        }
+      } catch {
+        // Leave UI state intact; user can refresh if rejoin keeps failing.
+      }
+    };
     const onDisconnect = () => setConnected(false);
 
     const onRoomState = (snapshot) => applyRoomSnapshot(snapshot);
@@ -191,6 +221,7 @@ export function RoomProvider({ children }) {
       setRoomMode('DJ');
       setSkipVotes({ trackId: null, voters: [], threshold: 1 });
       setScreenShare(null);
+      clearRoomSession();
       setYou(null);
       if (socket.connected) socket.disconnect();
     };
@@ -248,7 +279,7 @@ export function RoomProvider({ children }) {
     socket.off(EVENTS.SKIP_UPDATED, onSkipUpdated);
     socket.off(EVENTS.SCREEN_SHARE_UPDATED, onScreenShareUpdated);
     };
-  }, [applyRoomSnapshot, pushReaction, pushTimedFloat]);
+  }, [applyRoomSnapshot, pushReaction, pushTimedFloat, clearRoomSession]);
 
   // ---- Clock sync loop: measure RTT + serverTimeOffset while connected ----
   useEffect(() => {
@@ -293,12 +324,13 @@ export function RoomProvider({ children }) {
       if (res?.ok) {
         setYou(res.you);
         applyRoomSnapshot(res.room);
+        rememberRoomSession(res.room.code, res.you.name);
       } else {
         setError(res?.error || 'Could not create room');
       }
       return res;
     },
-    [applyRoomSnapshot],
+    [applyRoomSnapshot, rememberRoomSession],
   );
 
   const resetRoomState = useCallback(() => {
@@ -317,6 +349,28 @@ export function RoomProvider({ children }) {
     setScreenShare(null);
   }, []);
 
+  const rejoinRoom = useCallback(async () => {
+    const sess = roomSessionRef.current;
+    if (!sess.active || !sess.code || !sess.userName) {
+      return { ok: false, error: 'You are not in a room. Refresh the page and rejoin.' };
+    }
+    try {
+      await ensureSocketConnected();
+    } catch (err) {
+      return { ok: false, error: err?.message || 'Could not connect to the server.' };
+    }
+    const res = await emitAck(EVENTS.ROOM_JOIN, {
+      roomCode: sess.code,
+      userName: sess.userName,
+    });
+    if (res?.ok) {
+      setYou(res.you);
+      applyRoomSnapshot(res.room);
+      setError('');
+    }
+    return res;
+  }, [applyRoomSnapshot]);
+
   const joinRoom = useCallback(
     async (roomCode, userName) => {
       setError('');
@@ -332,20 +386,22 @@ export function RoomProvider({ children }) {
       if (res?.ok) {
         setYou(res.you);
         applyRoomSnapshot(res.room);
+        rememberRoomSession(res.room.code, res.you.name);
       } else {
         setError(res?.error || 'Could not join room');
       }
       return res;
     },
-    [applyRoomSnapshot],
+    [applyRoomSnapshot, rememberRoomSession],
   );
 
   const leaveRoom = useCallback(() => {
     socket.emit(EVENTS.ROOM_LEAVE);
     resetRoomState();
+    clearRoomSession();
     setYou(null);
     if (socket.connected) socket.disconnect();
-  }, [resetRoomState]);
+  }, [resetRoomState, clearRoomSession]);
 
   const sendChat = useCallback((text) => {
     const trimmed = (text || '').trim();
@@ -446,6 +502,7 @@ export function RoomProvider({ children }) {
       getLatency,
       createRoom,
       joinRoom,
+      rejoinRoom,
       leaveRoom,
       sendChat,
       sendReaction,
@@ -470,7 +527,7 @@ export function RoomProvider({ children }) {
       connected, you, room, hostId, users, messages, queue, currentIndex,
       currentVideo, playback, syncToken, reactions, error, kicked, isHost, canControl,
       roomMode, timedReactions, floatingTimed, skipVotes, screenShare, serverTimeOffset, getServerNow,
-      getLatency, createRoom, joinRoom, leaveRoom, sendChat, sendReaction,
+      getLatency, createRoom, joinRoom, rejoinRoom, leaveRoom, sendChat, sendReaction,
       addToQueue, removeFromQueue, playNow, kickUser, banUser, voteQueueItem, voteSkip,
       changeRoomMode, claimHost, transferHost, sendTimestampedReaction,
       emitPlay, emitPause, emitSeek, emitEnded,

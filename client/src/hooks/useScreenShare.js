@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Peer from 'peerjs';
-import { socket } from '../lib/socket.js';
+import { socket, ensureSocketConnected } from '../lib/socket.js';
 import { EVENTS } from '../lib/events.js';
 import { getScreenPeerOptions } from '../lib/peerClient.js';
 import {
@@ -23,8 +23,10 @@ function streamFromTracks(tracks) {
  *
  * @param {{ id: string } | null} you
  * @param {{ userId: string, userName: string, peerId: string } | null} activeSharer
+ * @param {string | undefined} roomCode
+ * @param {() => Promise<{ ok?: boolean, error?: string }>} rejoinRoom
  */
-export function useScreenShare(you, activeSharer) {
+export function useScreenShare(you, activeSharer, roomCode, rejoinRoom) {
   const [sharing, setSharing] = useState(false);
   const [starting, setStarting] = useState(false);
   const [screenError, setScreenError] = useState('');
@@ -180,7 +182,23 @@ export function useScreenShare(you, activeSharer) {
     isSharerRef.current = true;
     viewerCallsRef.current.clear();
 
+    if (!roomCode) {
+      setScreenError('You are not in a room. Refresh the page and rejoin.');
+      setStarting(false);
+      isSharerRef.current = false;
+      return;
+    }
+
     try {
+      await ensureSocketConnected();
+      if (rejoinRoom) {
+        const rejoin = await rejoinRoom();
+        if (!rejoin?.ok) {
+          failStart(rejoin?.error || 'Session expired. Refresh the page and rejoin the room.');
+          return;
+        }
+      }
+
       const stream = await getScreenCaptureStream();
       screenStreamRef.current = stream;
       setLocalStream(stream);
@@ -197,8 +215,20 @@ export function useScreenShare(you, activeSharer) {
         failStart('Screen share timed out. Is the server running?');
       }, 15000);
 
-      peer.on('open', (id) => {
-        socket.emit(EVENTS.SCREEN_SHARE_START, { peerId: id }, (res) => {
+      peer.on('open', () => {
+        const id = peer.id || peerRef.current?.id;
+        if (!id) {
+          failStart('Could not connect to the screen-share relay. Check your network.');
+          return;
+        }
+        if (!socket.connected) {
+          failStart('Lost connection to the room. Refresh the page and rejoin.');
+          return;
+        }
+        socket.emit(
+          EVENTS.SCREEN_SHARE_START,
+          { peerId: String(id), roomCode },
+          (res) => {
           clearTimeout(ackTimer);
           if (res?.ok === false) {
             failStart(res.error || 'Could not start screen share.');
@@ -208,7 +238,8 @@ export function useScreenShare(you, activeSharer) {
           setSharing(true);
           setStarting(false);
           flushPendingViewers();
-        });
+          },
+        );
       });
 
       peer.on('error', (err) => {
@@ -225,7 +256,7 @@ export function useScreenShare(you, activeSharer) {
       setScreenError(formatScreenShareError(err));
       cleanupShare();
     }
-  }, [sharing, starting, stopShare, cleanupShare, failStart, flushPendingViewers, peerErrorMessage]);
+  }, [sharing, starting, stopShare, cleanupShare, failStart, flushPendingViewers, peerErrorMessage, roomCode, rejoinRoom]);
 
   const enableRemoteAudio = useCallback(() => {
     setAudioBlocked(false);
