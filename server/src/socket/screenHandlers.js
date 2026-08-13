@@ -53,6 +53,22 @@ export function registerScreenHandlers(io, socket) {
     room.screenShare = null;
     emitScreenShare(io, room);
   });
+
+  // Viewer registered with PeerJS — relay their id to the active sharer.
+  socket.on(EVENTS.SCREEN_SHARE_VIEWER_JOIN, ({ peerId } = {}) => {
+    const room = roomOf(socket);
+    if (!room?.screenShare || !peerId) return;
+    if (room.screenShare.userId === socket.id) return;
+
+    const user = room.users.get(socket.id);
+    if (!user) return;
+
+    io.to(room.screenShare.userId).emit(EVENTS.SCREEN_SHARE_VIEWER_READY, {
+      userId: socket.id,
+      userName: user.name,
+      peerId: String(peerId),
+    });
+  });
 }
 
 export { emitScreenShare };

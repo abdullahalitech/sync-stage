@@ -5,7 +5,8 @@ import { EVENTS } from '../lib/events.js';
 import { getPeerOptions } from '../lib/peerClient.js';
 
 /**
- * WebRTC screen sharing — one sharer broadcasts to viewers via PeerJS.
+ * WebRTC screen sharing — sharer pushes stream to viewers via PeerJS.
+ * Viewers register a peer id; the sharer calls each viewer (reliable one-way).
  *
  * @param {{ id: string } | null} you
  * @param {{ userId: string, userName: string, peerId: string } | null} activeSharer
@@ -20,7 +21,8 @@ export function useScreenShare(you, activeSharer) {
   const peerRef = useRef(null);
   const screenStreamRef = useRef(null);
   const viewerCallRef = useRef(null);
-  const viewerCallsRef = useRef(new Map());
+  const viewerCallsRef = useRef(new Map()); // viewerPeerId -> call
+  const pendingViewersRef = useRef([]); // { peerId, userId }[]
   const isSharerRef = useRef(false);
   const connectTimerRef = useRef(null);
 
@@ -35,6 +37,7 @@ export function useScreenShare(you, activeSharer) {
   const destroyPeer = useCallback(() => {
     viewerCallsRef.current.forEach((call) => call.close());
     viewerCallsRef.current.clear();
+    pendingViewersRef.current = [];
     if (viewerCallRef.current) {
       viewerCallRef.current.close();
       viewerCallRef.current = null;
@@ -80,6 +83,30 @@ export function useScreenShare(you, activeSharer) {
     [cleanupShare],
   );
 
+  const callViewer = useCallback((viewerPeerId, userId) => {
+    const peer = peerRef.current;
+    const stream = screenStreamRef.current;
+    if (!peer || !stream || !viewerPeerId) {
+      pendingViewersRef.current.push({ peerId: viewerPeerId, userId });
+      return;
+    }
+    if (viewerCallsRef.current.has(viewerPeerId)) return;
+
+    const call = peer.call(viewerPeerId, stream, {
+      metadata: { userId, role: 'screen' },
+    });
+    if (!call) return;
+
+    viewerCallsRef.current.set(viewerPeerId, call);
+    call.on('close', () => viewerCallsRef.current.delete(viewerPeerId));
+    call.on('error', () => viewerCallsRef.current.delete(viewerPeerId));
+  }, []);
+
+  const flushPendingViewers = useCallback(() => {
+    const pending = pendingViewersRef.current.splice(0);
+    pending.forEach(({ peerId, userId }) => callViewer(peerId, userId));
+  }, [callViewer]);
+
   const startShare = useCallback(async () => {
     if (sharing || starting) return;
     setScreenError('');
@@ -89,7 +116,6 @@ export function useScreenShare(you, activeSharer) {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 30 },
-        // Browser shows a "Share tab/system audio" checkbox when supported.
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -120,15 +146,8 @@ export function useScreenShare(you, activeSharer) {
           }
           setSharing(true);
           setStarting(false);
+          flushPendingViewers();
         });
-      });
-
-      peer.on('call', (call) => {
-        call.answer(screenStreamRef.current);
-        const viewerId = call.metadata?.userId || call.peer;
-        viewerCallsRef.current.set(viewerId, call);
-        call.on('close', () => viewerCallsRef.current.delete(viewerId));
-        call.on('error', () => viewerCallsRef.current.delete(viewerId));
       });
 
       peer.on('error', (err) => {
@@ -149,60 +168,65 @@ export function useScreenShare(you, activeSharer) {
       );
       cleanupShare();
     }
-  }, [sharing, starting, stopShare, cleanupShare, failStart]);
+  }, [sharing, starting, stopShare, cleanupShare, failStart, flushPendingViewers]);
 
-  const connectToSharer = useCallback(
-    (sharer) => {
-      if (!sharer?.peerId || !you?.id) return;
-      if (sharer.userId === you.id) return;
+  const joinAsViewer = useCallback(() => {
+    if (!activeSharer?.peerId || !you?.id) return;
+    if (activeSharer.userId === you.id) return;
 
-      cleanupView();
-      destroyPeer();
+    cleanupView();
+    destroyPeer();
 
-      const peer = new Peer(undefined, getPeerOptions());
-      peerRef.current = peer;
+    const peer = new Peer(undefined, getPeerOptions());
+    peerRef.current = peer;
 
-      peer.on('open', () => {
-        const call = peer.call(sharer.peerId, new MediaStream(), {
-          metadata: { userId: you.id, role: 'viewer' },
-        });
-        if (!call) {
-          setScreenError('Could not connect to the screen share.');
-          return;
+    peer.on('call', (call) => {
+      call.answer();
+      viewerCallRef.current = call;
+      call.on('stream', (stream) => {
+        if (connectTimerRef.current) {
+          clearTimeout(connectTimerRef.current);
+          connectTimerRef.current = null;
         }
-        viewerCallRef.current = call;
-        call.on('stream', (stream) => {
-          if (connectTimerRef.current) {
-            clearTimeout(connectTimerRef.current);
-            connectTimerRef.current = null;
-          }
-          setRemoteStream(stream);
-          setScreenError('');
-        });
-        call.on('close', cleanupView);
-        call.on('error', () => {
-          setScreenError('Lost connection to the screen share.');
-          cleanupView();
-        });
-
-        connectTimerRef.current = setTimeout(() => {
-          setScreenError('Screen share is taking longer than expected…');
-        }, 12000);
+        setRemoteStream(stream);
+        setScreenError('');
       });
-
-      peer.on('error', (err) => {
-        console.warn('[screen] viewer peer error:', err?.type || err?.message);
-        setScreenError('Could not connect to the screen share.');
+      call.on('close', cleanupView);
+      call.on('error', () => {
+        setScreenError('Lost connection to the screen share.');
+        cleanupView();
       });
+    });
 
-      peer.on('disconnected', () => {
-        if (!peer.destroyed) peer.reconnect();
-      });
-    },
-    [you, cleanupView, destroyPeer],
-  );
+    peer.on('open', (id) => {
+      socket.emit(EVENTS.SCREEN_SHARE_VIEWER_JOIN, { peerId: id });
+      connectTimerRef.current = setTimeout(() => {
+        setScreenError('Screen share is taking longer than expected…');
+      }, 20000);
+    });
 
-  // Viewers connect when someone else is sharing.
+    peer.on('error', (err) => {
+      console.warn('[screen] viewer peer error:', err?.type || err?.message);
+      setScreenError('Could not connect to the screen share.');
+    });
+
+    peer.on('disconnected', () => {
+      if (!peer.destroyed) peer.reconnect();
+    });
+  }, [activeSharer?.peerId, activeSharer?.userId, you?.id, cleanupView, destroyPeer]);
+
+  // Sharer: call viewers when they register (listen always; gate on isSharerRef).
+  useEffect(() => {
+    const onViewerReady = ({ peerId, userId }) => {
+      if (!isSharerRef.current) return;
+      callViewer(peerId, userId);
+    };
+
+    socket.on(EVENTS.SCREEN_SHARE_VIEWER_READY, onViewerReady);
+    return () => socket.off(EVENTS.SCREEN_SHARE_VIEWER_READY, onViewerReady);
+  }, [callViewer]);
+
+  // Viewers: register and wait for the sharer to call them.
   useEffect(() => {
     if (!activeSharer?.peerId) {
       cleanupView();
@@ -210,12 +234,12 @@ export function useScreenShare(you, activeSharer) {
       return;
     }
     if (activeSharer.userId === you?.id) return;
-    connectToSharer(activeSharer);
+    joinAsViewer();
   }, [
     activeSharer?.userId,
     activeSharer?.peerId,
     you?.id,
-    connectToSharer,
+    joinAsViewer,
     cleanupView,
     destroyPeer,
   ]);
