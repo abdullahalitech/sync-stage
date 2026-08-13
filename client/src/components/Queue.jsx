@@ -11,11 +11,11 @@ import {
 } from 'lucide-react';
 import { useRoom } from '../context/RoomContext.jsx';
 import {
-  parseYouTubeId,
-  thumbnailFor,
-  watchUrlFor,
-  fetchYouTubeTitle,
-} from '../lib/youtube.js';
+  normalizeMediaUrl,
+  isSupportedMediaUrl,
+  fetchMediaMetadata,
+  defaultMediaTitle,
+} from '../lib/media.js';
 
 export default function Queue() {
   const {
@@ -36,15 +36,20 @@ export default function Queue() {
   const handleAdd = async (e) => {
     e.preventDefault();
     setLocalError('');
-    const id = parseYouTubeId(input);
-    if (!id) {
-      setLocalError('Please paste a valid YouTube link.');
+    const url = normalizeMediaUrl(input);
+    if (!url || !isSupportedMediaUrl(url)) {
+      setLocalError(
+        'Paste a supported link (YouTube, Vimeo, SoundCloud, Twitch, MP4, etc.).',
+      );
       return;
     }
     setAdding(true);
-    const url = watchUrlFor(id);
-    const title = (await fetchYouTubeTitle(url)) || 'YouTube video';
-    addToQueue({ url, title, thumbnail: thumbnailFor(id) });
+    const { title, thumbnail, provider } = await fetchMediaMetadata(url);
+    addToQueue({
+      url,
+      title: title || defaultMediaTitle(url, provider),
+      thumbnail: thumbnail || '',
+    });
     setAdding(false);
     setInput('');
   };
@@ -74,7 +79,7 @@ export default function Queue() {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Paste a YouTube URL…"
+          placeholder="Paste a video or audio URL…"
           className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-violet-500/70"
         />
         <button

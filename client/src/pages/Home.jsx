@@ -62,8 +62,8 @@ export default function Home() {
             </span>
           </h1>
           <p className="mt-4 text-lg text-white/60">
-            Create a room, share the code, and enjoy YouTube in real time with a
-            shared queue, live chat, and floating reactions.
+            Create a room, share the code, and watch YouTube, Vimeo, and more in
+            real time with a shared queue, live chat, and floating reactions.
           </p>
           <ul className="mt-6 space-y-2 text-sm text-white/50">
             <li className="flex items-center gap-2">

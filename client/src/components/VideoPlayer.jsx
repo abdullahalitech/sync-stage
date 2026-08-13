@@ -307,8 +307,8 @@ export default function VideoPlayer({
         <Radio className="mb-3 h-10 w-10 text-white/30" />
         <p className="text-lg font-medium text-white/70">Nothing playing yet</p>
         <p className="mt-1 max-w-sm text-sm text-white/40">
-          Paste a YouTube link in the queue below to start the show. The first
-          track begins automatically.
+          Paste a video link in the queue below to start the show (YouTube,
+          Vimeo, SoundCloud, and more). The first track begins automatically.
         </p>
       </div>
     );
@@ -377,7 +377,7 @@ export default function VideoPlayer({
             title={
               pipAvailable
                 ? 'Picture-in-Picture'
-                : 'PiP unavailable for this source (YouTube renders in an iframe)'
+                : 'PiP unavailable for this source (embedded iframe players)'
             }
             className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs backdrop-blur transition ${
               pipAvailable
