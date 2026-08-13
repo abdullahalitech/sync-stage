@@ -2,6 +2,28 @@ import { useMemo } from 'react';
 import { Activity } from 'lucide-react';
 
 const BUCKET_SECONDS = 10;
+const MAX_BUCKETS = 360; // cap timeline at ~1 hour of buckets
+
+/** Guard against Infinity/NaN from live streams (e.g. Twitch). */
+function safeSeconds(value, fallback = 0) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return n;
+}
+
+function resolveTimelineDuration(duration, playedSeconds, isLiveStream) {
+  const played = safeSeconds(playedSeconds);
+  const dur = safeSeconds(duration);
+
+  if (dur > 0) return Math.min(dur, MAX_BUCKETS * BUCKET_SECONDS);
+
+  if (isLiveStream) {
+    // Live: grow with watch time, minimum 2 minutes visible
+    return Math.min(Math.max(played + 60, 120), MAX_BUCKETS * BUCKET_SECONDS);
+  }
+
+  return Math.max(played, 1);
+}
 
 function formatBucketTime(idx) {
   const seconds = idx * BUCKET_SECONDS + BUCKET_SECONDS / 2;
@@ -15,7 +37,8 @@ function formatBucketTime(idx) {
  *
  * @param {{ timedReactions: {timestamp:number, emoji:string}[], duration:number,
  *   playedSeconds:number, pins?: {id:string, seconds:number}[], activePinId?:string|null,
- *   onPickTimestamp:(s:number)=>void, onSelectPin?:(id:string)=>void }} props
+ *   onPickTimestamp:(s:number)=>void, onSelectPin?:(id:string)=>void,
+ *   isLiveStream?:boolean }} props
  */
 export default function Heatmap({
   timedReactions = [],
@@ -25,11 +48,15 @@ export default function Heatmap({
   activePinId = null,
   onPickTimestamp,
   onSelectPin,
+  isLiveStream = false,
 }) {
-  const effectiveDuration = Math.max(duration || 0, playedSeconds || 0, 1);
+  const effectiveDuration = resolveTimelineDuration(duration, playedSeconds, isLiveStream);
 
   const { buckets, max } = useMemo(() => {
-    const count = Math.max(1, Math.ceil(effectiveDuration / BUCKET_SECONDS));
+    const count = Math.min(
+      MAX_BUCKETS,
+      Math.max(1, Math.ceil(effectiveDuration / BUCKET_SECONDS)),
+    );
     const arr = new Array(count).fill(0);
     for (const r of timedReactions) {
       const idx = Math.min(count - 1, Math.floor((r.timestamp || 0) / BUCKET_SECONDS));
@@ -38,7 +65,9 @@ export default function Heatmap({
     return { buckets: arr, max: Math.max(1, ...arr) };
   }, [timedReactions, effectiveDuration]);
 
-  const progress = Math.min(100, (playedSeconds / effectiveDuration) * 100);
+  const progress = effectiveDuration
+    ? Math.min(100, (safeSeconds(playedSeconds) / effectiveDuration) * 100)
+    : 0;
 
   const handleBucketClick = (idx) => {
     const seconds = Math.min(
@@ -53,9 +82,15 @@ export default function Heatmap({
       <div className="mb-2 flex items-center gap-2 text-xs text-white/50">
         <Activity className="h-3.5 w-3.5 text-fuchsia-400" />
         Engagement heatmap
-        <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-violet-300">
-          Click to add pin
-        </span>
+        {isLiveStream ? (
+          <span className="rounded-full bg-purple-500/15 px-2 py-0.5 text-purple-300">
+            Live — timeline grows as you watch
+          </span>
+        ) : (
+          <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-violet-300">
+            Click to add pin
+          </span>
+        )}
         <span className="ml-auto">{timedReactions.length} reactions</span>
       </div>
 

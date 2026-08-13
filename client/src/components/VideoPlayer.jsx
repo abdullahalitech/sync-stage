@@ -17,7 +17,7 @@ import { useRoom } from '../context/RoomContext.jsx';
 import { usePictureInPicture } from '../hooks/usePictureInPicture.js';
 import { useFullscreen } from '../hooks/useFullscreen.js';
 import { formatTimestamp, parseTimestamp } from '../lib/time.js';
-import { getTwitchEmbedParents } from '../lib/media.js';
+import { getTwitchEmbedParents, isTwitchLiveChannelUrl } from '../lib/media.js';
 import ChatOverlay from './ChatOverlay.jsx';
 import Heatmap from './Heatmap.jsx';
 
@@ -37,6 +37,7 @@ const SYNC_META = {
   seeking: { label: 'Seeking', cls: 'bg-fuchsia-500/15 text-fuchsia-300' },
   paused: { label: 'Paused', cls: 'bg-white/10 text-white/60' },
   idle: { label: 'Idle', cls: 'bg-white/10 text-white/50' },
+  live: { label: 'Live stream', cls: 'bg-purple-500/15 text-purple-300' },
 };
 
 export default function VideoPlayer({
@@ -100,6 +101,7 @@ export default function VideoPlayer({
   }, [isFullscreen, onFullscreenChange]);
 
   const url = currentVideo?.url || '';
+  const isTwitchLive = isTwitchLiveChannelUrl(url);
 
   const playerConfig = useMemo(
     () => ({
@@ -156,7 +158,7 @@ export default function VideoPlayer({
 
   // Immediate coarse correction on every play/pause/seek event (followers only).
   useEffect(() => {
-    if (isHost || !ready) return;
+    if (isHost || !ready || isTwitchLive) return;
     if (lastAppliedToken.current === syncToken) return;
     lastAppliedToken.current = syncToken;
 
@@ -164,11 +166,11 @@ export default function VideoPlayer({
     const current = playerRef.current?.getCurrentTime?.() ?? 0;
     if (Math.abs(current - target) > 0.8) hardSeek(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [syncToken, ready, isHost]);
+  }, [syncToken, ready, isHost, isTwitchLive]);
 
   // ---- Sync Buffer: continuous drift correction every 500ms (followers) ----
   useEffect(() => {
-    if (isHost || !ready || !url) return undefined;
+    if (isHost || !ready || !url || isTwitchLive) return undefined;
 
     const tick = () => {
       const pb = playbackRef.current;
@@ -200,11 +202,11 @@ export default function VideoPlayer({
     const interval = setInterval(tick, 500);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHost, ready, url]);
+  }, [isHost, ready, url, isTwitchLive]);
 
   const handleReady = () => {
     setReady(true);
-    if (!isHost) {
+    if (!isHost && !isTwitchLive) {
       const target = computeHostTime();
       if (target > 0.5) playerRef.current?.seekTo(target, 'seconds');
     }
@@ -222,7 +224,7 @@ export default function VideoPlayer({
     emitPause(playerRef.current?.getCurrentTime?.() ?? 0);
   };
   const onSeekEvent = (seconds) => {
-    if (!canControl || suppressEvents.current) return;
+    if (!canControl || suppressEvents.current || isTwitchLive) return;
     emitSeek(seconds);
   };
   const onEnded = () => {
@@ -303,8 +305,14 @@ export default function VideoPlayer({
   const reactionPreviewSeconds = activePin ? activePin.seconds : getLiveSeconds();
 
   const playing = isHost ? hostPlaying : playback.isPlaying;
-  const effectiveRate = isHost ? 1 : playbackRate;
-  const status = isHost ? SYNC_META.source : SYNC_META[syncStatus] || SYNC_META.idle;
+  const effectiveRate = isHost || isTwitchLive ? 1 : playbackRate;
+  const status = isTwitchLive
+    ? isHost
+      ? SYNC_META.live
+      : SYNC_META.live
+    : isHost
+      ? SYNC_META.source
+      : SYNC_META[syncStatus] || SYNC_META.idle;
 
   const skipApplies =
     roomMode === 'PARTY' &&
@@ -350,7 +358,8 @@ export default function VideoPlayer({
           onEnded={onEnded}
           onDuration={(d) => {
             const fromPlayer = playerRef.current?.getDuration?.();
-            setDuration(d || fromPlayer || 0);
+            const raw = d ?? fromPlayer ?? 0;
+            setDuration(Number.isFinite(raw) ? raw : 0);
           }}
           onProgress={({ playedSeconds: p }) => setPlayedSeconds(p)}
           config={playerConfig}
@@ -576,6 +585,7 @@ export default function VideoPlayer({
         activePinId={activePinId}
         onPickTimestamp={handlePickTimestamp}
         onSelectPin={selectPin}
+        isLiveStream={isTwitchLive}
       />
     </div>
   );

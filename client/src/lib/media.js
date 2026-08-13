@@ -34,6 +34,17 @@ export function isTwitchUrl(url) {
   return TWITCH_VIDEO.test(url || '') || TWITCH_CHANNEL.test(url || '');
 }
 
+/** Live channel URL (e.g. twitch.tv/caedrel) — not a /videos/ VOD. */
+export function isTwitchLiveChannelUrl(input) {
+  const url = normalizeMediaUrl(input) || input || '';
+  return TWITCH_CHANNEL.test(url) && !TWITCH_VIDEO.test(url);
+}
+
+export function isTwitchVodUrl(input) {
+  const url = normalizeMediaUrl(input) || input || '';
+  return TWITCH_VIDEO.test(url);
+}
+
 function canPlayViaPatterns(url) {
   if (TWITCH_VIDEO.test(url) || TWITCH_CHANNEL.test(url)) return true;
   return typeof ReactPlayer.canPlay === 'function' && ReactPlayer.canPlay(url);
