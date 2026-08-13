@@ -12,7 +12,7 @@ import {
 import { useRoom } from '../context/RoomContext.jsx';
 import {
   normalizeMediaUrl,
-  isSupportedMediaUrl,
+  getMediaSupportError,
   fetchMediaMetadata,
   defaultMediaTitle,
 } from '../lib/media.js';
@@ -37,10 +37,9 @@ export default function Queue() {
     e.preventDefault();
     setLocalError('');
     const url = normalizeMediaUrl(input);
-    if (!url || !isSupportedMediaUrl(url)) {
-      setLocalError(
-        'Paste a supported link (YouTube, Vimeo, SoundCloud, Twitch, MP4, etc.).',
-      );
+    const supportError = getMediaSupportError(input);
+    if (!url || supportError) {
+      setLocalError(supportError || 'Please paste a valid media link.');
       return;
     }
     setAdding(true);
@@ -79,7 +78,7 @@ export default function Queue() {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Paste a video or audio URL…"
+          placeholder="Paste a video URL (YouTube, Vimeo, Twitch VOD/channel…)"
           className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-violet-500/70"
         />
         <button

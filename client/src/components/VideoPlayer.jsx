@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import ReactPlayer from 'react-player';
 import {
   Lock,
@@ -17,6 +17,7 @@ import { useRoom } from '../context/RoomContext.jsx';
 import { usePictureInPicture } from '../hooks/usePictureInPicture.js';
 import { useFullscreen } from '../hooks/useFullscreen.js';
 import { formatTimestamp, parseTimestamp } from '../lib/time.js';
+import { getTwitchEmbedParents } from '../lib/media.js';
 import ChatOverlay from './ChatOverlay.jsx';
 import Heatmap from './Heatmap.jsx';
 
@@ -99,6 +100,18 @@ export default function VideoPlayer({
   }, [isFullscreen, onFullscreenChange]);
 
   const url = currentVideo?.url || '';
+
+  const playerConfig = useMemo(
+    () => ({
+      youtube: { playerVars: { modestbranding: 1, rel: 0 } },
+      twitch: {
+        options: {
+          parent: getTwitchEmbedParents(),
+        },
+      },
+    }),
+    [],
+  );
 
   const getLiveSeconds = () =>
     playerRef.current?.getCurrentTime?.() ?? playedSeconds;
@@ -340,7 +353,7 @@ export default function VideoPlayer({
             setDuration(d || fromPlayer || 0);
           }}
           onProgress={({ playedSeconds: p }) => setPlayedSeconds(p)}
-          config={{ youtube: { playerVars: { modestbranding: 1, rel: 0 } } }}
+          config={playerConfig}
         />
 
         {/* Sync state pill */}
