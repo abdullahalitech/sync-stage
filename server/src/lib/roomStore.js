@@ -39,6 +39,7 @@ class RoomStore {
       playback: { isPlaying: false, time: 0, updatedAt: Date.now() },
       timedReactions: [], // { id, timestamp, emoji, userId, userName, color, createdAt }
       voice: new Map(), // socketId -> peerId (users currently on the voice stage)
+      screenShare: null, // { userId, userName, peerId } | null
       bans: new Map(), // ip -> { name, until (ms epoch | null for permanent), at }
       lastAdvanceAt: 0, // debounce guard for auto-advance races in PARTY mode
       skipVotes: { trackId: null, voters: [] },
@@ -82,6 +83,7 @@ class RoomStore {
       },
       timedReactions: Array.isArray(doc.reactions) ? doc.reactions : [],
       voice: new Map(),
+      screenShare: null,
       bans,
       lastAdvanceAt: 0,
       skipVotes: { trackId: null, voters: [] },
@@ -333,6 +335,7 @@ class RoomStore {
         userId: id,
         peerId,
       })),
+      screenShare: room.screenShare ? { ...room.screenShare } : null,
     };
   }
 }

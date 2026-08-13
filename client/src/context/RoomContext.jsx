@@ -33,6 +33,7 @@ export function RoomProvider({ children }) {
   const [timedReactions, setTimedReactions] = useState([]); // full list (heatmap)
   const [floatingTimed, setFloatingTimed] = useState([]); // transient floats over player
   const [skipVotes, setSkipVotes] = useState({ trackId: null, voters: [], threshold: 1 });
+  const [screenShare, setScreenShare] = useState(null); // { userId, userName, peerId } | null
   const [serverTimeOffset, setServerTimeOffset] = useState(0); // ms (state, for UI)
 
   // A monotonically increasing token bumped on every play/pause/seek we receive,
@@ -62,6 +63,7 @@ export function RoomProvider({ children }) {
     setSkipVotes(
       snapshot.skipVotes || { trackId: null, voters: [], threshold: 1 },
     );
+    setScreenShare(snapshot.screenShare || null);
     setSyncToken((t) => t + 1);
   }, []);
 
@@ -134,6 +136,10 @@ export function RoomProvider({ children }) {
       });
     };
 
+    const onScreenShareUpdated = ({ sharer }) => {
+      setScreenShare(sharer || null);
+    };
+
     const onPlay = ({ time, at }) => {
       setPlayback({ isPlaying: true, time: time || 0, updatedAt: at || Date.now() });
       setSyncToken((t) => t + 1);
@@ -184,6 +190,7 @@ export function RoomProvider({ children }) {
       setFloatingTimed([]);
       setRoomMode('DJ');
       setSkipVotes({ trackId: null, voters: [], threshold: 1 });
+      setScreenShare(null);
       setYou(null);
       if (socket.connected) socket.disconnect();
     };
@@ -218,6 +225,7 @@ export function RoomProvider({ children }) {
     socket.on(EVENTS.ROOM_MODE_UPDATED, onModeUpdated);
     socket.on(EVENTS.REACTION_TS_NEW, onTimedReaction);
     socket.on(EVENTS.SKIP_UPDATED, onSkipUpdated);
+    socket.on(EVENTS.SCREEN_SHARE_UPDATED, onScreenShareUpdated);
 
     return () => {
       socket.off('connect', onConnect);
@@ -238,6 +246,7 @@ export function RoomProvider({ children }) {
     socket.off(EVENTS.ROOM_MODE_UPDATED, onModeUpdated);
     socket.off(EVENTS.REACTION_TS_NEW, onTimedReaction);
     socket.off(EVENTS.SKIP_UPDATED, onSkipUpdated);
+    socket.off(EVENTS.SCREEN_SHARE_UPDATED, onScreenShareUpdated);
     };
   }, [applyRoomSnapshot, pushReaction, pushTimedFloat]);
 
@@ -305,6 +314,7 @@ export function RoomProvider({ children }) {
     setFloatingTimed([]);
     setRoomMode('DJ');
     setSkipVotes({ trackId: null, voters: [], threshold: 1 });
+    setScreenShare(null);
   }, []);
 
   const joinRoom = useCallback(
@@ -430,6 +440,7 @@ export function RoomProvider({ children }) {
       timedReactions,
       floatingTimed,
       skipVotes,
+      screenShare,
       serverTimeOffset,
       getServerNow,
       getLatency,
@@ -458,7 +469,7 @@ export function RoomProvider({ children }) {
     [
       connected, you, room, hostId, users, messages, queue, currentIndex,
       currentVideo, playback, syncToken, reactions, error, kicked, isHost, canControl,
-      roomMode, timedReactions, floatingTimed, skipVotes, serverTimeOffset, getServerNow,
+      roomMode, timedReactions, floatingTimed, skipVotes, screenShare, serverTimeOffset, getServerNow,
       getLatency, createRoom, joinRoom, leaveRoom, sendChat, sendReaction,
       addToQueue, removeFromQueue, playNow, kickUser, banUser, voteQueueItem, voteSkip,
       changeRoomMode, claimHost, transferHost, sendTimestampedReaction,

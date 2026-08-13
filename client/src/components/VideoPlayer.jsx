@@ -12,10 +12,13 @@ import {
   Pin,
   PinOff,
   X,
+  Monitor,
+  MonitorOff,
 } from 'lucide-react';
 import { useRoom } from '../context/RoomContext.jsx';
 import { usePictureInPicture } from '../hooks/usePictureInPicture.js';
 import { useFullscreen } from '../hooks/useFullscreen.js';
+import { useScreenShare } from '../hooks/useScreenShare.js';
 import { formatTimestamp, parseTimestamp } from '../lib/time.js';
 import { getTwitchEmbedParents, isTwitchLiveChannelUrl } from '../lib/media.js';
 import ChatOverlay from './ChatOverlay.jsx';
@@ -38,6 +41,7 @@ const SYNC_META = {
   paused: { label: 'Paused', cls: 'bg-white/10 text-white/60' },
   idle: { label: 'Idle', cls: 'bg-white/10 text-white/50' },
   live: { label: 'Live stream', cls: 'bg-purple-500/15 text-purple-300' },
+  screen: { label: 'Screen share', cls: 'bg-cyan-500/15 text-cyan-300' },
 };
 
 export default function VideoPlayer({
@@ -64,10 +68,12 @@ export default function VideoPlayer({
     emitPause,
     emitSeek,
     emitEnded,
+    screenShare,
   } = useRoom();
 
   const playerRef = useRef(null);
   const containerRef = useRef(null);
+  const screenVideoRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [hostPlaying, setHostPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -95,6 +101,30 @@ export default function VideoPlayer({
   );
   const { isFullscreen, available: fsAvailable, toggle: toggleFullscreen } =
     useFullscreen(containerRef);
+
+  const {
+    starting: shareStarting,
+    screenError,
+    isSharer,
+    activeSharer,
+    displayStream,
+    screenVisible,
+    startShare,
+    stopShare,
+  } = useScreenShare(you, screenShare);
+
+  const screenActive = screenVisible;
+
+  useEffect(() => {
+    const el = screenVideoRef.current;
+    if (!el) return;
+    el.srcObject = displayStream || null;
+    // Mute local preview only; viewers should hear shared tab/system audio.
+    el.muted = isSharer;
+    if (displayStream) {
+      el.play().catch(() => {});
+    }
+  }, [displayStream, isSharer]);
 
   useEffect(() => {
     onFullscreenChange?.(isFullscreen);
@@ -306,13 +336,20 @@ export default function VideoPlayer({
 
   const playing = isHost ? hostPlaying : playback.isPlaying;
   const effectiveRate = isHost || isTwitchLive ? 1 : playbackRate;
-  const status = isTwitchLive
-    ? isHost
-      ? SYNC_META.live
-      : SYNC_META.live
-    : isHost
-      ? SYNC_META.source
-      : SYNC_META[syncStatus] || SYNC_META.idle;
+  const status = screenActive
+    ? SYNC_META.screen
+    : isTwitchLive
+      ? isHost
+        ? SYNC_META.live
+        : SYNC_META.live
+      : isHost
+        ? SYNC_META.source
+        : SYNC_META[syncStatus] || SYNC_META.idle;
+
+  const someoneElseSharing =
+    screenActive && activeSharer && you && activeSharer.userId !== you.id;
+  const canStartShare = !screenActive && !shareStarting;
+  const shareLabel = isSharer ? 'Stop share' : 'Share screen';
 
   const skipApplies =
     roomMode === 'PARTY' &&
@@ -322,15 +359,29 @@ export default function VideoPlayer({
   const skipThreshold = skipApplies ? skipVotes.threshold : 1;
   const hasSkipVote = skipApplies && you && skipVotes.voters.includes(you.id);
 
-  if (!url) {
+  if (!url && !screenActive) {
     return (
-      <div className="flex aspect-video w-full flex-col items-center justify-center rounded-2xl border border-white/10 bg-black/40 text-center">
-        <Radio className="mb-3 h-10 w-10 text-white/30" />
-        <p className="text-lg font-medium text-white/70">Nothing playing yet</p>
-        <p className="mt-1 max-w-sm text-sm text-white/40">
-          Paste a link or upload a file in the queue below to start the show.
-          The first track begins automatically.
-        </p>
+      <div className="flex flex-col gap-3">
+        <div className="flex aspect-video w-full flex-col items-center justify-center rounded-2xl border border-white/10 bg-black/40 text-center">
+          <Radio className="mb-3 h-10 w-10 text-white/30" />
+          <p className="text-lg font-medium text-white/70">Nothing playing yet</p>
+          <p className="mt-1 max-w-sm text-sm text-white/40">
+            Paste a link or upload a file in the queue below to start the show.
+            Or share your screen for everyone to watch live.
+          </p>
+          <button
+            type="button"
+            onClick={startShare}
+            disabled={!canStartShare}
+            className="mt-4 flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Monitor className="h-4 w-4" />
+            {shareStarting ? 'Starting…' : 'Share screen'}
+          </button>
+          {screenError && (
+            <p className="mt-2 text-xs text-red-400">{screenError}</p>
+          )}
+        </div>
       </div>
     );
   }
@@ -343,35 +394,63 @@ export default function VideoPlayer({
           isFullscreen ? 'rounded-none' : 'rounded-2xl'
         }`}
       >
-        <ReactPlayer
-          ref={playerRef}
-          url={url}
-          playing={playing}
-          controls={canControl}
-          playbackRate={effectiveRate}
-          width="100%"
-          height="100%"
-          onReady={handleReady}
-          onPlay={onPlay}
-          onPause={onPause}
-          onSeek={onSeekEvent}
-          onEnded={onEnded}
-          onDuration={(d) => {
-            const fromPlayer = playerRef.current?.getDuration?.();
-            const raw = d ?? fromPlayer ?? 0;
-            setDuration(Number.isFinite(raw) ? raw : 0);
-          }}
-          onProgress={({ playedSeconds: p }) => setPlayedSeconds(p)}
-          config={playerConfig}
-        />
+        {url && (
+          <ReactPlayer
+            ref={playerRef}
+            url={url}
+            playing={playing}
+            controls={canControl && !screenActive}
+            playbackRate={effectiveRate}
+            width="100%"
+            height="100%"
+            style={screenActive ? { visibility: 'hidden', position: 'absolute', inset: 0 } : undefined}
+            onReady={handleReady}
+            onPlay={onPlay}
+            onPause={onPause}
+            onSeek={onSeekEvent}
+            onEnded={onEnded}
+            onDuration={(d) => {
+              const fromPlayer = playerRef.current?.getDuration?.();
+              const raw = d ?? fromPlayer ?? 0;
+              setDuration(Number.isFinite(raw) ? raw : 0);
+            }}
+            onProgress={({ playedSeconds: p }) => setPlayedSeconds(p)}
+            config={playerConfig}
+          />
+        )}
 
-        {/* Sync state pill */}
+        {screenActive && (
+          displayStream ? (
+            <video
+              ref={screenVideoRef}
+              autoPlay
+              playsInline
+              muted={isSharer}
+              className="absolute inset-0 h-full w-full bg-black object-contain"
+            />
+          ) : (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black text-center">
+              <Monitor className="mb-3 h-10 w-10 animate-pulse text-cyan-400/60" />
+              <p className="text-sm text-white/70">
+                Connecting to {activeSharer?.userName || 'screen share'}…
+              </p>
+            </div>
+          )
+        )}
+
+        {/* Sync / screen-share state pill */}
         <div className="pointer-events-none absolute left-3 top-3 z-20">
           <span
             className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium backdrop-blur ${status.cls}`}
           >
-            <Zap className="h-3 w-3" />
-            {status.label}
+            {screenActive ? (
+              <Monitor className="h-3 w-3" />
+            ) : (
+              <Zap className="h-3 w-3" />
+            )}
+            {screenActive && activeSharer
+              ? `${activeSharer.userName} · Screen`
+              : status.label}
           </span>
         </div>
 
@@ -394,8 +473,34 @@ export default function VideoPlayer({
           )}
           <button
             type="button"
+            onClick={isSharer ? stopShare : startShare}
+            disabled={shareStarting || someoneElseSharing}
+            title={
+              someoneElseSharing
+                ? `${activeSharer?.userName || 'Someone'} is sharing their screen`
+                : isSharer
+                  ? 'Stop sharing your screen'
+                  : 'Share your screen with the room'
+            }
+            className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs backdrop-blur transition ${
+              isSharer
+                ? 'bg-cyan-600 text-white ring-1 ring-cyan-400 hover:bg-cyan-500'
+                : someoneElseSharing
+                  ? 'cursor-not-allowed bg-black/40 text-white/30'
+                  : 'bg-black/60 text-white hover:bg-black/80'
+            }`}
+          >
+            {isSharer ? (
+              <MonitorOff className="h-3.5 w-3.5" />
+            ) : (
+              <Monitor className="h-3.5 w-3.5" />
+            )}
+            {shareStarting ? '…' : isSharer ? 'Stop' : 'Share'}
+          </button>
+          <button
+            type="button"
             onClick={togglePiP}
-            disabled={!pipAvailable}
+            disabled={!pipAvailable || screenActive}
             title={
               pipAvailable
                 ? 'Picture-in-Picture'
@@ -450,7 +555,7 @@ export default function VideoPlayer({
         </div>
 
         {/* Guests without control can't touch the surface */}
-        {!canControl && (
+        {!canControl && !screenActive && (
           <div className="absolute inset-0 z-[15] flex items-end justify-center bg-transparent">
             <div className="pointer-events-none mb-3 flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1 text-xs text-white/80 backdrop-blur">
               <Lock className="h-3.5 w-3.5" /> Host controls playback
@@ -463,8 +568,12 @@ export default function VideoPlayer({
         )}
       </div>
 
+      {screenError && (
+        <p className="text-center text-xs text-red-400">{screenError}</p>
+      )}
+
       {/* PARTY skip vote */}
-      {roomMode === 'PARTY' && (
+      {roomMode === 'PARTY' && url && !screenActive && (
         <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2">
           <span className="text-xs text-white/50">Vote to skip this track</span>
           <button
@@ -483,6 +592,7 @@ export default function VideoPlayer({
       )}
 
       {/* Timestamped reaction bar */}
+      {url && !screenActive && (
       <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="pl-1 text-xs text-white/40">
@@ -575,8 +685,10 @@ export default function VideoPlayer({
           ))}
         </div>
       </div>
+      )}
 
       {/* Engagement heatmap */}
+      {url && !screenActive && (
       <Heatmap
         timedReactions={timedReactions}
         duration={duration}
@@ -587,6 +699,7 @@ export default function VideoPlayer({
         onSelectPin={selectPin}
         isLiveStream={isTwitchLive}
       />
+      )}
     </div>
   );
 }

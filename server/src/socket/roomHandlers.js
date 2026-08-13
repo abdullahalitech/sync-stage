@@ -2,6 +2,7 @@ import { EVENTS } from './events.js';
 import { roomStore } from '../lib/roomStore.js';
 import { persistRoom, loadRecentMessages, loadRoom } from '../lib/persistence.js';
 import { emitUsers, sendRoomState } from './helpers.js';
+import { clearScreenShare } from './screenHandlers.js';
 
 const AVATAR_COLORS = [
   '#f87171', '#fb923c', '#facc15', '#4ade80',
@@ -157,8 +158,12 @@ export function registerRoomHandlers(io, socket) {
 }
 
 function handleDeparture(io, socket) {
-  const { room, code, user, hostChanged, roomClosed } = roomStore.removeUser(socket.id);
-  socket.leave(code || '');
+  const code = roomStore.socketToRoom.get(socket.id);
+  const roomBefore = code ? roomStore.getRoom(code) : null;
+  if (roomBefore) clearScreenShare(io, roomBefore, socket.id);
+
+  const { room, code: leftCode, user, hostChanged, roomClosed } = roomStore.removeUser(socket.id);
+  socket.leave(leftCode || '');
   if (roomClosed || !room) return;
 
   // Tear down any voice-stage presence for the departing user.

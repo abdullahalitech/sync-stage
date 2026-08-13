@@ -6,6 +6,7 @@ import { registerPlayerHandlers } from './playerHandlers.js';
 import { registerEngagementHandlers } from './engagementHandlers.js';
 import { registerRoomModeHandlers } from './roomModeHandlers.js';
 import { registerVoiceHandlers } from './voiceHandlers.js';
+import { registerScreenHandlers } from './screenHandlers.js';
 import { registerTimeHandlers } from './timeHandlers.js';
 
 /**
@@ -33,6 +34,7 @@ export function initSocket(httpServer) {
     registerEngagementHandlers(io, socket);
     registerRoomModeHandlers(io, socket);
     registerVoiceHandlers(io, socket);
+    registerScreenHandlers(io, socket);
     registerTimeHandlers(io, socket);
 
     socket.on('disconnect', (reason) => {

@@ -71,4 +71,9 @@ export const EVENTS = {
   VOICE_PEER_JOINED: 'voice:peer-joined',
   VOICE_PEER_LEFT: 'voice:peer-left',
   VOICE_SPEAKING: 'voice:speaking',
+
+  // WebRTC screen share signaling
+  SCREEN_SHARE_START: 'screen:share-start',
+  SCREEN_SHARE_STOP: 'screen:share-stop',
+  SCREEN_SHARE_UPDATED: 'screen:updated',
 };
