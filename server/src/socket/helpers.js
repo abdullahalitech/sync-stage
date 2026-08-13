@@ -18,6 +18,13 @@ export function emitQueue(io, room) {
     currentIndex: room.currentIndex,
     playback: room.playback,
   });
+  emitSkipUpdated(io, room);
+}
+
+/** Broadcast skip vote progress to everyone in the room. */
+export function emitSkipUpdated(io, room) {
+  if (!room) return;
+  io.to(room.code).emit(EVENTS.SKIP_UPDATED, roomStore.getSkipVoteState(room));
 }
 
 /** Send the full serialized room snapshot to a single socket. */

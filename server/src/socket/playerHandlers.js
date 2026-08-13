@@ -9,6 +9,10 @@ function setPlayback(room, patch) {
   room.playback = { ...room.playback, ...patch, updatedAt: Date.now() };
 }
 
+function onTrackChange(room) {
+  roomStore.resetSkipVotes(room);
+}
+
 export function registerPlayerHandlers(io, socket) {
   // ---- Player transport controls (DJ: host only, PARTY: anyone) ----
   socket.on(EVENTS.PLAYER_PLAY, ({ time } = {}) => {
@@ -61,6 +65,7 @@ export function registerPlayerHandlers(io, socket) {
     if (room.currentIndex === -1) {
       room.currentIndex = 0;
       setPlayback(room, { isPlaying: true, time: 0 });
+      onTrackChange(room);
     }
 
     emitQueue(io, room);
@@ -81,6 +86,7 @@ export function registerPlayerHandlers(io, socket) {
       // Removed the currently playing track: stay on the same slot (next track shifts in).
       if (room.currentIndex >= room.queue.length) room.currentIndex = room.queue.length - 1;
       setPlayback(room, { isPlaying: true, time: 0 });
+      onTrackChange(room);
     }
 
     emitQueue(io, room);
@@ -96,6 +102,7 @@ export function registerPlayerHandlers(io, socket) {
 
     room.currentIndex = idx;
     setPlayback(room, { isPlaying: true, time: 0 });
+    onTrackChange(room);
     emitQueue(io, room);
     persistRoom(room);
   });
@@ -105,17 +112,7 @@ export function registerPlayerHandlers(io, socket) {
   socket.on(EVENTS.QUEUE_ENDED, () => {
     const room = roomOf(socket);
     if (!canControl(room, socket.id)) return;
-
-    const now = Date.now();
-    if (now - (room.lastAdvanceAt || 0) < 1500) return;
-    room.lastAdvanceAt = now;
-
-    if (room.currentIndex < room.queue.length - 1) {
-      room.currentIndex += 1;
-      setPlayback(room, { isPlaying: true, time: 0 });
-    } else {
-      setPlayback(room, { isPlaying: false, time: 0 });
-    }
+    if (!roomStore.advanceQueue(room)) return;
     emitQueue(io, room);
     persistRoom(room);
   });

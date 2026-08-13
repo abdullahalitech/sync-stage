@@ -48,6 +48,9 @@ export const EVENTS = {
   QUEUE_UPDATED: 'queue:updated',
   QUEUE_VOTE: 'vote_queue_item',
 
+  SKIP_VOTE: 'skip:vote',
+  SKIP_UPDATED: 'skip:updated',
+
   // Clock sync (RTT / serverTimeOffset)
   TIME_SYNC: 'time:sync',
 

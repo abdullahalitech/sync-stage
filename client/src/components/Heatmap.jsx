@@ -5,10 +5,12 @@ const BUCKET_SECONDS = 10;
 
 /**
  * Engagement heatmap: groups timestamped reactions into 10s buckets and draws a
- * YouTube-style "peak interest" bar. Clicking a bucket seeks there (controllers).
+ * YouTube-style "peak interest" bar. Clicking a bucket seeks there (controllers)
+ * or picks a reaction timestamp when pickMode is enabled.
  *
  * @param {{ timedReactions: {timestamp:number, emoji:string}[], duration:number,
- *   playedSeconds:number, canControl:boolean, onSeek:(s:number)=>void }} props
+ *   playedSeconds:number, canControl:boolean, onSeek:(s:number)=>void,
+ *   pickMode?:boolean, pickedSeconds?:number|null, onPickTimestamp?:(s:number)=>void }} props
  */
 export default function Heatmap({
   timedReactions = [],
@@ -16,6 +18,9 @@ export default function Heatmap({
   playedSeconds = 0,
   canControl = false,
   onSeek,
+  pickMode = false,
+  pickedSeconds = null,
+  onPickTimestamp,
 }) {
   const { buckets, max } = useMemo(() => {
     const count = Math.max(1, Math.ceil((duration || 0) / BUCKET_SECONDS));
@@ -29,10 +34,19 @@ export default function Heatmap({
   }, [timedReactions, duration]);
 
   const progress = duration ? Math.min(100, (playedSeconds / duration) * 100) : 0;
+  const pickedProgress =
+    duration && pickedSeconds != null
+      ? Math.min(100, (pickedSeconds / duration) * 100)
+      : null;
 
-  const seekToBucket = (idx) => {
-    if (!canControl || !duration || !onSeek) return;
-    onSeek(idx * BUCKET_SECONDS + BUCKET_SECONDS / 2);
+  const handleBucketClick = (idx) => {
+    if (!duration) return;
+    const seconds = idx * BUCKET_SECONDS + BUCKET_SECONDS / 2;
+    if (pickMode && onPickTimestamp) {
+      onPickTimestamp(seconds);
+      return;
+    }
+    if (canControl && onSeek) onSeek(seconds);
   };
 
   return (
@@ -40,20 +54,27 @@ export default function Heatmap({
       <div className="mb-2 flex items-center gap-2 text-xs text-white/50">
         <Activity className="h-3.5 w-3.5 text-fuchsia-400" />
         Engagement heatmap
+        {pickMode && (
+          <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-violet-300">
+            Click to pick time
+          </span>
+        )}
         <span className="ml-auto">{timedReactions.length} reactions</span>
       </div>
 
       <div className="relative flex h-14 items-end gap-[2px]">
         {buckets.map((count, i) => {
           const intensity = count / max;
+          const clickable = duration && (pickMode || canControl);
           return (
             <button
               key={i}
-              onClick={() => seekToBucket(i)}
-              disabled={!canControl || !duration}
+              type="button"
+              onClick={() => handleBucketClick(i)}
+              disabled={!clickable}
               title={`${count} reaction${count === 1 ? '' : 's'}`}
               className={`group relative flex-1 rounded-sm transition-all ${
-                canControl && duration ? 'cursor-pointer' : 'cursor-default'
+                clickable ? 'cursor-pointer' : 'cursor-default'
               }`}
               style={{
                 height: `${Math.max(6, intensity * 100)}%`,
@@ -62,6 +83,14 @@ export default function Heatmap({
             />
           );
         })}
+
+        {/* Pinned reaction timestamp marker */}
+        {pickedProgress != null && (
+          <div
+            className="pointer-events-none absolute top-0 bottom-0 w-[2px] bg-amber-400 shadow"
+            style={{ left: `${pickedProgress}%` }}
+          />
+        )}
 
         {/* Playhead */}
         {duration > 0 && (

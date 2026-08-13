@@ -1,7 +1,7 @@
 import { EVENTS } from './events.js';
 import { roomStore } from '../lib/roomStore.js';
 import { persistRoom } from '../lib/persistence.js';
-import { emitQueue } from './helpers.js';
+import { emitQueue, emitSkipUpdated } from './helpers.js';
 
 const roomOf = (socket) => roomStore.getRoom(roomStore.socketToRoom.get(socket.id));
 
@@ -54,5 +54,26 @@ export function registerEngagementHandlers(io, socket) {
 
     emitQueue(io, room);
     persistRoom(room);
+  });
+
+  // ---- Skip vote (PARTY mode: majority skips current track) ----
+  socket.on(EVENTS.SKIP_VOTE, () => {
+    const room = roomOf(socket);
+    if (!room || room.roomMode !== 'PARTY') return;
+    const user = room.users.get(socket.id);
+    if (!user) return;
+
+    const result = roomStore.voteSkip(room, user.id);
+    if (!result) return;
+
+    emitSkipUpdated(io, room);
+
+    if (result.reached && roomStore.advanceQueue(room)) {
+      emitQueue(io, room);
+      emitSkipUpdated(io, room);
+      persistRoom(room);
+    } else {
+      persistRoom(room);
+    }
   });
 }

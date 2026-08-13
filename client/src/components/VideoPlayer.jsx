@@ -1,8 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactPlayer from 'react-player';
-import { Lock, Radio, PictureInPicture2, Zap } from 'lucide-react';
+import {
+  Lock,
+  Radio,
+  PictureInPicture2,
+  Maximize2,
+  Minimize2,
+  Zap,
+  SkipForward,
+  Pin,
+  PinOff,
+} from 'lucide-react';
 import { useRoom } from '../context/RoomContext.jsx';
 import { usePictureInPicture } from '../hooks/usePictureInPicture.js';
+import { useFullscreen } from '../hooks/useFullscreen.js';
+import { formatTimestamp, parseTimestamp } from '../lib/time.js';
 import Heatmap from './Heatmap.jsx';
 
 const TIMED_EMOJIS = ['❤️', '🔥', '🚀', '😂', '👏', '🎉'];
@@ -25,6 +37,10 @@ export default function VideoPlayer() {
     syncToken,
     isHost,
     canControl,
+    roomMode,
+    you,
+    skipVotes,
+    voteSkip,
     getServerNow,
     floatingTimed,
     timedReactions,
@@ -43,6 +59,9 @@ export default function VideoPlayer() {
   const [playedSeconds, setPlayedSeconds] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [syncStatus, setSyncStatus] = useState('idle');
+  const [pinnedTime, setPinnedTime] = useState(false);
+  const [reactionTargetSeconds, setReactionTargetSeconds] = useState(0);
+  const [timeInput, setTimeInput] = useState('0:00');
 
   const lastAppliedToken = useRef(0);
   const suppressEvents = useRef(false);
@@ -53,8 +72,14 @@ export default function VideoPlayer() {
     playerRef,
     containerRef,
   );
+  const { isFullscreen, available: fsAvailable, toggle: toggleFullscreen } =
+    useFullscreen(containerRef);
 
   const url = currentVideo?.url || '';
+
+  const effectiveReactionSeconds = pinnedTime
+    ? reactionTargetSeconds
+    : playerRef.current?.getCurrentTime?.() ?? playedSeconds;
 
   /** Where the host *should* be right now, on the shared server clock. */
   const computeHostTime = () => {
@@ -77,8 +102,18 @@ export default function VideoPlayer() {
     setDuration(0);
     setPlayedSeconds(0);
     setPlaybackRate(1);
+    setPinnedTime(false);
+    setReactionTargetSeconds(0);
+    setTimeInput('0:00');
     if (isHost) setHostPlaying(true);
   }, [url, isHost]);
+
+  // Keep live reaction target in sync with playback when not pinned.
+  useEffect(() => {
+    if (pinnedTime) return;
+    setReactionTargetSeconds(playedSeconds);
+    setTimeInput(formatTimestamp(playedSeconds));
+  }, [playedSeconds, pinnedTime]);
 
   // Immediate coarse correction on every play/pause/seek event (followers only).
   useEffect(() => {
@@ -161,14 +196,42 @@ export default function VideoPlayer() {
     emitSeek(seconds);
   };
 
-  const sendReactionAtCurrent = (emoji) => {
-    const at = playerRef.current?.getCurrentTime?.() ?? playedSeconds;
-    sendTimestampedReaction(emoji, at);
+  const handlePickTimestamp = (seconds) => {
+    const clamped = duration ? Math.min(seconds, duration) : seconds;
+    setPinnedTime(true);
+    setReactionTargetSeconds(clamped);
+    setTimeInput(formatTimestamp(clamped));
+  };
+
+  const handleTimeInputChange = (value) => {
+    setTimeInput(value);
+    const parsed = parseTimestamp(value);
+    const clamped = duration ? Math.min(parsed, duration) : parsed;
+    setReactionTargetSeconds(clamped);
+    setPinnedTime(true);
+  };
+
+  const useLiveTime = () => {
+    setPinnedTime(false);
+    setReactionTargetSeconds(playedSeconds);
+    setTimeInput(formatTimestamp(playedSeconds));
+  };
+
+  const sendReactionAtTarget = (emoji) => {
+    sendTimestampedReaction(emoji, effectiveReactionSeconds);
   };
 
   const playing = isHost ? hostPlaying : playback.isPlaying;
   const effectiveRate = isHost ? 1 : playbackRate;
   const status = isHost ? SYNC_META.source : SYNC_META[syncStatus] || SYNC_META.idle;
+
+  const skipApplies =
+    roomMode === 'PARTY' &&
+    currentVideo &&
+    skipVotes.trackId === currentVideo.id;
+  const skipCount = skipApplies ? skipVotes.voters.length : 0;
+  const skipThreshold = skipApplies ? skipVotes.threshold : 1;
+  const hasSkipVote = skipApplies && you && skipVotes.voters.includes(you.id);
 
   if (!url) {
     return (
@@ -187,7 +250,9 @@ export default function VideoPlayer() {
     <div className="flex flex-col gap-3">
       <div
         ref={containerRef}
-        className="relative aspect-video w-full overflow-hidden rounded-2xl border border-white/10 bg-black shadow-2xl"
+        className={`relative aspect-video w-full overflow-hidden border border-white/10 bg-black shadow-2xl ${
+          isFullscreen ? 'rounded-none' : 'rounded-2xl'
+        }`}
       >
         <ReactPlayer
           ref={playerRef}
@@ -217,9 +282,10 @@ export default function VideoPlayer() {
           </span>
         </div>
 
-        {/* Control bar (PiP) */}
+        {/* Control bar (PiP + fullscreen) */}
         <div className="absolute right-3 top-3 z-20 flex gap-2">
           <button
+            type="button"
             onClick={togglePiP}
             disabled={!pipAvailable}
             title={
@@ -235,6 +301,22 @@ export default function VideoPlayer() {
           >
             <PictureInPicture2 className="h-3.5 w-3.5" />
             PiP
+          </button>
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            disabled={!fsAvailable}
+            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            className={`flex items-center gap-1 rounded-full bg-black/60 px-2.5 py-1 text-xs text-white backdrop-blur transition hover:bg-black/80 ${
+              isFullscreen ? 'ring-1 ring-violet-400' : ''
+            }`}
+          >
+            {isFullscreen ? (
+              <Minimize2 className="h-3.5 w-3.5" />
+            ) : (
+              <Maximize2 className="h-3.5 w-3.5" />
+            )}
+            {isFullscreen ? 'Exit' : 'Full'}
           </button>
         </div>
 
@@ -269,16 +351,79 @@ export default function VideoPlayer() {
         )}
       </div>
 
+      {/* PARTY skip vote */}
+      {roomMode === 'PARTY' && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2">
+          <span className="text-xs text-white/50">Vote to skip this track</span>
+          <button
+            type="button"
+            onClick={voteSkip}
+            className={`flex items-center gap-2 rounded-xl px-3 py-1.5 text-sm transition ${
+              hasSkipVote
+                ? 'bg-violet-600 text-white'
+                : 'bg-white/10 text-white/80 hover:bg-white/15'
+            }`}
+          >
+            <SkipForward className="h-4 w-4" />
+            Skip {skipCount}/{skipThreshold}
+          </button>
+        </div>
+      )}
+
       {/* Timestamped reaction bar */}
-      <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2">
-        <span className="pl-1 text-xs text-white/40">React at this moment</span>
-        <div className="ml-auto flex gap-1">
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <span className="pl-1 text-xs text-white/40">
+            {pinnedTime
+              ? `React at ${formatTimestamp(reactionTargetSeconds)}`
+              : 'React at now (live)'}
+          </span>
+          <input
+            type="text"
+            value={timeInput}
+            onChange={(e) => handleTimeInputChange(e.target.value)}
+            onBlur={() => setTimeInput(formatTimestamp(reactionTargetSeconds))}
+            placeholder="m:ss"
+            className="w-16 rounded-lg border border-white/10 bg-black/30 px-2 py-1 text-xs text-white outline-none focus:border-violet-500/70"
+            title="Reaction timestamp (m:ss)"
+          />
+          <button
+            type="button"
+            onClick={
+              pinnedTime
+                ? useLiveTime
+                : () => {
+                    setPinnedTime(true);
+                    setReactionTargetSeconds(playedSeconds);
+                    setTimeInput(formatTimestamp(playedSeconds));
+                  }
+            }
+            className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition ${
+              pinnedTime
+                ? 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+                : 'bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25'
+            }`}
+            title={pinnedTime ? 'Follow live playback' : 'Pin current time'}
+          >
+            {pinnedTime ? (
+              <>
+                <PinOff className="h-3 w-3" /> Now
+              </>
+            ) : (
+              <>
+                <Pin className="h-3 w-3" /> Pin
+              </>
+            )}
+          </button>
+        </div>
+        <div className="flex gap-1">
           {TIMED_EMOJIS.map((emoji) => (
             <button
               key={emoji}
-              onClick={() => sendReactionAtCurrent(emoji)}
+              type="button"
+              onClick={() => sendReactionAtTarget(emoji)}
               className="rounded-xl px-2 py-1 text-lg transition hover:scale-125 hover:bg-white/10 active:scale-95"
-              title={`React ${emoji}`}
+              title={`React ${emoji} at ${formatTimestamp(effectiveReactionSeconds)}`}
             >
               {emoji}
             </button>
@@ -291,8 +436,11 @@ export default function VideoPlayer() {
         timedReactions={timedReactions}
         duration={duration}
         playedSeconds={playedSeconds}
-        canControl={canControl}
+        canControl={canControl && !pinnedTime}
         onSeek={handleHeatmapSeek}
+        pickMode={pinnedTime}
+        pickedSeconds={pinnedTime ? reactionTargetSeconds : null}
+        onPickTimestamp={handlePickTimestamp}
       />
     </div>
   );

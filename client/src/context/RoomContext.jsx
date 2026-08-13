@@ -32,6 +32,7 @@ export function RoomProvider({ children }) {
   const [roomMode, setRoomMode] = useState('DJ'); // 'DJ' | 'PARTY'
   const [timedReactions, setTimedReactions] = useState([]); // full list (heatmap)
   const [floatingTimed, setFloatingTimed] = useState([]); // transient floats over player
+  const [skipVotes, setSkipVotes] = useState({ trackId: null, voters: [], threshold: 1 });
   const [serverTimeOffset, setServerTimeOffset] = useState(0); // ms (state, for UI)
 
   // A monotonically increasing token bumped on every play/pause/seek we receive,
@@ -58,6 +59,9 @@ export function RoomProvider({ children }) {
     setPlayback(snapshot.playback || emptyPlayback);
     setRoomMode(snapshot.roomMode || 'DJ');
     setTimedReactions(snapshot.timedReactions || []);
+    setSkipVotes(
+      snapshot.skipVotes || { trackId: null, voters: [], threshold: 1 },
+    );
     setSyncToken((t) => t + 1);
   }, []);
 
@@ -121,6 +125,15 @@ export function RoomProvider({ children }) {
       }
     };
 
+    const onSkipUpdated = (payload) => {
+      if (!payload) return;
+      setSkipVotes({
+        trackId: payload.trackId ?? null,
+        voters: payload.voters || [],
+        threshold: payload.threshold ?? 1,
+      });
+    };
+
     const onPlay = ({ time, at }) => {
       setPlayback({ isPlaying: true, time: time || 0, updatedAt: at || Date.now() });
       setSyncToken((t) => t + 1);
@@ -170,6 +183,7 @@ export function RoomProvider({ children }) {
       setTimedReactions([]);
       setFloatingTimed([]);
       setRoomMode('DJ');
+      setSkipVotes({ trackId: null, voters: [], threshold: 1 });
       setYou(null);
       if (socket.connected) socket.disconnect();
     };
@@ -203,6 +217,7 @@ export function RoomProvider({ children }) {
     socket.on(EVENTS.ROOM_BANNED, onBanned);
     socket.on(EVENTS.ROOM_MODE_UPDATED, onModeUpdated);
     socket.on(EVENTS.REACTION_TS_NEW, onTimedReaction);
+    socket.on(EVENTS.SKIP_UPDATED, onSkipUpdated);
 
     return () => {
       socket.off('connect', onConnect);
@@ -222,6 +237,7 @@ export function RoomProvider({ children }) {
     socket.off(EVENTS.ROOM_BANNED, onBanned);
     socket.off(EVENTS.ROOM_MODE_UPDATED, onModeUpdated);
     socket.off(EVENTS.REACTION_TS_NEW, onTimedReaction);
+    socket.off(EVENTS.SKIP_UPDATED, onSkipUpdated);
     };
   }, [applyRoomSnapshot, pushReaction, pushTimedFloat]);
 
@@ -288,6 +304,7 @@ export function RoomProvider({ children }) {
     setTimedReactions([]);
     setFloatingTimed([]);
     setRoomMode('DJ');
+    setSkipVotes({ trackId: null, voters: [], threshold: 1 });
   }, []);
 
   const joinRoom = useCallback(
@@ -354,6 +371,10 @@ export function RoomProvider({ children }) {
     socket.emit(EVENTS.QUEUE_VOTE, { itemId, voteType });
   }, []);
 
+  const voteSkip = useCallback(() => {
+    socket.emit(EVENTS.SKIP_VOTE);
+  }, []);
+
   const changeRoomMode = useCallback((mode) => {
     socket.emit(EVENTS.ROOM_MODE_SET, { mode });
   }, []);
@@ -408,6 +429,7 @@ export function RoomProvider({ children }) {
       roomMode,
       timedReactions,
       floatingTimed,
+      skipVotes,
       serverTimeOffset,
       getServerNow,
       getLatency,
@@ -422,6 +444,7 @@ export function RoomProvider({ children }) {
       kickUser,
       banUser,
       voteQueueItem,
+      voteSkip,
       changeRoomMode,
       claimHost,
       transferHost,
@@ -435,9 +458,9 @@ export function RoomProvider({ children }) {
     [
       connected, you, room, hostId, users, messages, queue, currentIndex,
       currentVideo, playback, syncToken, reactions, error, kicked, isHost, canControl,
-      roomMode, timedReactions, floatingTimed, serverTimeOffset, getServerNow,
+      roomMode, timedReactions, floatingTimed, skipVotes, serverTimeOffset, getServerNow,
       getLatency, createRoom, joinRoom, leaveRoom, sendChat, sendReaction,
-      addToQueue, removeFromQueue, playNow, kickUser, banUser, voteQueueItem,
+      addToQueue, removeFromQueue, playNow, kickUser, banUser, voteQueueItem, voteSkip,
       changeRoomMode, claimHost, transferHost, sendTimestampedReaction,
       emitPlay, emitPause, emitSeek, emitEnded,
     ],

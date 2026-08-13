@@ -41,6 +41,7 @@ class RoomStore {
       voice: new Map(), // socketId -> peerId (users currently on the voice stage)
       bans: new Map(), // ip -> { name, until (ms epoch | null for permanent), at }
       lastAdvanceAt: 0, // debounce guard for auto-advance races in PARTY mode
+      skipVotes: { trackId: null, voters: [] },
       createdAt: Date.now(),
     };
 
@@ -83,6 +84,7 @@ class RoomStore {
       voice: new Map(),
       bans,
       lastAdvanceAt: 0,
+      skipVotes: { trackId: null, voters: [] },
       createdAt: doc.createdAt ? new Date(doc.createdAt).getTime() : Date.now(),
     };
 
@@ -139,6 +141,78 @@ class RoomStore {
     const tail = room.queue.slice(room.currentIndex + 1);
     tail.sort((a, b) => (b.score || 0) - (a.score || 0));
     room.queue = [...head, ...tail];
+  }
+
+  /** Majority threshold for skip votes (at least half of connected users). */
+  getSkipThreshold(room) {
+    return Math.max(1, Math.ceil(room.users.size / 2));
+  }
+
+  getCurrentTrack(room) {
+    if (room.currentIndex < 0 || !room.queue.length) return null;
+    return room.queue[room.currentIndex] || null;
+  }
+
+  resetSkipVotes(room) {
+    const track = this.getCurrentTrack(room);
+    room.skipVotes = { trackId: track?.id || null, voters: [] };
+  }
+
+  getSkipVoteState(room) {
+    const track = this.getCurrentTrack(room);
+    const trackId = track?.id || null;
+    const voters =
+      room.skipVotes?.trackId === trackId ? [...(room.skipVotes.voters || [])] : [];
+    return {
+      trackId,
+      voters,
+      threshold: this.getSkipThreshold(room),
+    };
+  }
+
+  /**
+   * Toggle a user's skip vote on the current track. PARTY mode only.
+   * Returns null if invalid; otherwise { voters, threshold, reached }.
+   */
+  voteSkip(room, userId) {
+    if (room.roomMode !== 'PARTY') return null;
+    const track = this.getCurrentTrack(room);
+    if (!track) return null;
+
+    if (room.skipVotes?.trackId !== track.id) {
+      room.skipVotes = { trackId: track.id, voters: [] };
+    }
+
+    const voters = room.skipVotes.voters;
+    const idx = voters.indexOf(userId);
+    if (idx >= 0) voters.splice(idx, 1);
+    else voters.push(userId);
+
+    const threshold = this.getSkipThreshold(room);
+    return {
+      voters: [...voters],
+      threshold,
+      reached: voters.length >= threshold,
+    };
+  }
+
+  /**
+   * Advance to the next queue item (debounced). Resets skip votes on success.
+   * Returns true if the queue pointer changed or playback was updated.
+   */
+  advanceQueue(room) {
+    const now = Date.now();
+    if (now - (room.lastAdvanceAt || 0) < 1500) return false;
+    room.lastAdvanceAt = now;
+
+    if (room.currentIndex < room.queue.length - 1) {
+      room.currentIndex += 1;
+      room.playback = { isPlaying: true, time: 0, updatedAt: Date.now() };
+    } else {
+      room.playback = { isPlaying: false, time: 0, updatedAt: Date.now() };
+    }
+    this.resetSkipVotes(room);
+    return true;
   }
 
   getRoom(code) {
@@ -254,6 +328,7 @@ class RoomStore {
       currentIndex: room.currentIndex,
       playback: room.playback,
       timedReactions: room.timedReactions || [],
+      skipVotes: this.getSkipVoteState(room),
       voicePeers: Array.from(room.voice?.entries?.() || []).map(([id, peerId]) => ({
         userId: id,
         peerId,

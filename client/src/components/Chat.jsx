@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send, MessageSquare } from 'lucide-react';
+import { Send, MessageSquare, X } from 'lucide-react';
 import { useRoom } from '../context/RoomContext.jsx';
 
-export default function Chat() {
+export default function Chat({ onClose }) {
   const { messages, you, sendChat } = useRoom();
   const [text, setText] = useState('');
   const scrollRef = useRef(null);
@@ -24,6 +24,16 @@ export default function Chat() {
       <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
         <MessageSquare className="h-5 w-5 text-violet-400" />
         <h2 className="font-semibold">Chat</h2>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-auto rounded-lg p-1 text-white/50 transition hover:bg-white/10 hover:text-white"
+            title="Close chat"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
       <div ref={scrollRef} className="scroll-thin flex-1 space-y-3 overflow-y-auto p-4">

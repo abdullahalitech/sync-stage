@@ -34,6 +34,9 @@ export const EVENTS = {
   QUEUE_UPDATED: 'queue:updated',
   QUEUE_VOTE: 'vote_queue_item',
 
+  SKIP_VOTE: 'skip:vote',
+  SKIP_UPDATED: 'skip:updated',
+
   TIME_SYNC: 'time:sync',
 
   REACTION_TS_SEND: 'send_timestamped_reaction',
