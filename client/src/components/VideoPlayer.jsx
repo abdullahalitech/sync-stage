@@ -6,6 +6,7 @@ import {
   PictureInPicture2,
   Maximize2,
   Minimize2,
+  MessageSquare,
   Zap,
   SkipForward,
   Pin,
@@ -15,6 +16,7 @@ import { useRoom } from '../context/RoomContext.jsx';
 import { usePictureInPicture } from '../hooks/usePictureInPicture.js';
 import { useFullscreen } from '../hooks/useFullscreen.js';
 import { formatTimestamp, parseTimestamp } from '../lib/time.js';
+import ChatOverlay from './ChatOverlay.jsx';
 import Heatmap from './Heatmap.jsx';
 
 const TIMED_EMOJIS = ['❤️', '🔥', '🚀', '😂', '👏', '🎉'];
@@ -30,7 +32,12 @@ const SYNC_META = {
   idle: { label: 'Idle', cls: 'bg-white/10 text-white/50' },
 };
 
-export default function VideoPlayer() {
+export default function VideoPlayer({
+  chatOpen = false,
+  onChatToggle,
+  onChatClose,
+  onFullscreenChange,
+}) {
   const {
     currentVideo,
     playback,
@@ -66,7 +73,11 @@ export default function VideoPlayer() {
   const lastAppliedToken = useRef(0);
   const suppressEvents = useRef(false);
   const playbackRef = useRef(playback);
+  const pinnedTimeRef = useRef(false);
+  const reactionTargetRef = useRef(0);
   playbackRef.current = playback;
+  pinnedTimeRef.current = pinnedTime;
+  reactionTargetRef.current = reactionTargetSeconds;
 
   const { isPiP, available: pipAvailable, toggle: togglePiP } = usePictureInPicture(
     playerRef,
@@ -75,11 +86,14 @@ export default function VideoPlayer() {
   const { isFullscreen, available: fsAvailable, toggle: toggleFullscreen } =
     useFullscreen(containerRef);
 
+  useEffect(() => {
+    onFullscreenChange?.(isFullscreen);
+  }, [isFullscreen, onFullscreenChange]);
+
   const url = currentVideo?.url || '';
 
-  const effectiveReactionSeconds = pinnedTime
-    ? reactionTargetSeconds
-    : playerRef.current?.getCurrentTime?.() ?? playedSeconds;
+  const getLiveSeconds = () =>
+    playerRef.current?.getCurrentTime?.() ?? playedSeconds;
 
   /** Where the host *should* be right now, on the shared server clock. */
   const computeHostTime = () => {
@@ -190,14 +204,9 @@ export default function VideoPlayer() {
     if (canControl) emitEnded();
   };
 
-  const handleHeatmapSeek = (seconds) => {
-    if (!canControl) return;
-    playerRef.current?.seekTo(seconds, 'seconds');
-    emitSeek(seconds);
-  };
-
   const handlePickTimestamp = (seconds) => {
-    const clamped = duration ? Math.min(seconds, duration) : seconds;
+    const maxTime = duration || playerRef.current?.getDuration?.() || seconds;
+    const clamped = Math.max(0, Math.min(seconds, maxTime));
     setPinnedTime(true);
     setReactionTargetSeconds(clamped);
     setTimeInput(formatTimestamp(clamped));
@@ -205,21 +214,35 @@ export default function VideoPlayer() {
 
   const handleTimeInputChange = (value) => {
     setTimeInput(value);
+    const maxTime = duration || playerRef.current?.getDuration?.() || Infinity;
     const parsed = parseTimestamp(value);
-    const clamped = duration ? Math.min(parsed, duration) : parsed;
+    const clamped = Math.max(0, Math.min(parsed, maxTime));
     setReactionTargetSeconds(clamped);
     setPinnedTime(true);
   };
 
+  const pinCurrentTime = () => {
+    const at = getLiveSeconds();
+    setPinnedTime(true);
+    setReactionTargetSeconds(at);
+    setTimeInput(formatTimestamp(at));
+  };
+
   const useLiveTime = () => {
+    const at = getLiveSeconds();
     setPinnedTime(false);
-    setReactionTargetSeconds(playedSeconds);
-    setTimeInput(formatTimestamp(playedSeconds));
+    setReactionTargetSeconds(at);
+    setTimeInput(formatTimestamp(at));
   };
 
   const sendReactionAtTarget = (emoji) => {
-    sendTimestampedReaction(emoji, effectiveReactionSeconds);
+    const seconds = pinnedTimeRef.current
+      ? reactionTargetRef.current
+      : getLiveSeconds();
+    sendTimestampedReaction(emoji, seconds);
   };
+
+  const reactionPreviewSeconds = pinnedTime ? reactionTargetSeconds : getLiveSeconds();
 
   const playing = isHost ? hostPlaying : playback.isPlaying;
   const effectiveRate = isHost ? 1 : playbackRate;
@@ -267,7 +290,10 @@ export default function VideoPlayer() {
           onPause={onPause}
           onSeek={onSeekEvent}
           onEnded={onEnded}
-          onDuration={setDuration}
+          onDuration={(d) => {
+            const fromPlayer = playerRef.current?.getDuration?.();
+            setDuration(d || fromPlayer || 0);
+          }}
           onProgress={({ playedSeconds: p }) => setPlayedSeconds(p)}
           config={{ youtube: { playerVars: { modestbranding: 1, rel: 0 } } }}
         />
@@ -282,8 +308,23 @@ export default function VideoPlayer() {
           </span>
         </div>
 
-        {/* Control bar (PiP + fullscreen) */}
+        {/* Control bar (PiP + fullscreen + chat in fullscreen) */}
         <div className="absolute right-3 top-3 z-20 flex gap-2">
+          {isFullscreen && onChatToggle && (
+            <button
+              type="button"
+              onClick={onChatToggle}
+              title={chatOpen ? 'Hide chat' : 'Show chat'}
+              className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs backdrop-blur transition ${
+                chatOpen
+                  ? 'bg-violet-600 text-white ring-1 ring-violet-400'
+                  : 'bg-black/60 text-white hover:bg-black/80'
+              }`}
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              Chat
+            </button>
+          )}
           <button
             type="button"
             onClick={togglePiP}
@@ -349,6 +390,10 @@ export default function VideoPlayer() {
             </div>
           </div>
         )}
+
+        {isFullscreen && chatOpen && onChatClose && (
+          <ChatOverlay onClose={onChatClose} variant="embedded" />
+        )}
       </div>
 
       {/* PARTY skip vote */}
@@ -389,15 +434,7 @@ export default function VideoPlayer() {
           />
           <button
             type="button"
-            onClick={
-              pinnedTime
-                ? useLiveTime
-                : () => {
-                    setPinnedTime(true);
-                    setReactionTargetSeconds(playedSeconds);
-                    setTimeInput(formatTimestamp(playedSeconds));
-                  }
-            }
+            onClick={pinnedTime ? useLiveTime : pinCurrentTime}
             className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition ${
               pinnedTime
                 ? 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
@@ -423,7 +460,7 @@ export default function VideoPlayer() {
               type="button"
               onClick={() => sendReactionAtTarget(emoji)}
               className="rounded-xl px-2 py-1 text-lg transition hover:scale-125 hover:bg-white/10 active:scale-95"
-              title={`React ${emoji} at ${formatTimestamp(effectiveReactionSeconds)}`}
+              title={`React ${emoji} at ${formatTimestamp(reactionPreviewSeconds)}`}
             >
               {emoji}
             </button>
@@ -436,9 +473,6 @@ export default function VideoPlayer() {
         timedReactions={timedReactions}
         duration={duration}
         playedSeconds={playedSeconds}
-        canControl={canControl && !pinnedTime}
-        onSeek={handleHeatmapSeek}
-        pickMode={pinnedTime}
         pickedSeconds={pinnedTime ? reactionTargetSeconds : null}
         onPickTimestamp={handlePickTimestamp}
       />

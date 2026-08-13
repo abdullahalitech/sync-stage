@@ -14,7 +14,7 @@ import {
 import { useRoom } from '../context/RoomContext.jsx';
 import VideoPlayer from '../components/VideoPlayer.jsx';
 import Queue from '../components/Queue.jsx';
-import Chat from '../components/Chat.jsx';
+import ChatOverlay from '../components/ChatOverlay.jsx';
 import MemberList from '../components/MemberList.jsx';
 import RoomModeToggle from '../components/RoomModeToggle.jsx';
 import VoiceStage from '../components/VoiceStage.jsx';
@@ -30,6 +30,7 @@ export default function RoomPage() {
   const [chatOpen, setChatOpen] = useState(
     () => localStorage.getItem(CHAT_OPEN_KEY) === 'true',
   );
+  const [playerFullscreen, setPlayerFullscreen] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(CHAT_OPEN_KEY, chatOpen ? 'true' : 'false');
@@ -103,25 +104,21 @@ export default function RoomPage() {
 
       <main className="mx-auto max-w-7xl px-4 py-6">
         <div className="flex flex-col gap-4">
-          <VideoPlayer />
+          <VideoPlayer
+            chatOpen={chatOpen}
+            onChatToggle={() => setChatOpen((v) => !v)}
+            onChatClose={() => setChatOpen(false)}
+            onFullscreenChange={setPlayerFullscreen}
+          />
           <VoiceStage />
           <Queue />
         </div>
       </main>
 
       {chatOpen &&
+        !playerFullscreen &&
         createPortal(
-          <>
-            <button
-              type="button"
-              aria-label="Close chat"
-              className="fixed inset-0 z-30 bg-black/40 backdrop-blur-sm lg:bg-black/20"
-              onClick={() => setChatOpen(false)}
-            />
-            <aside className="fixed right-0 top-[57px] z-40 flex h-[calc(100vh-57px)] w-full max-w-[360px] flex-col overflow-hidden border-l border-white/10 bg-[#0b0b12]/95 shadow-2xl backdrop-blur-xl animate-fade-in sm:w-[360px]">
-              <Chat onClose={() => setChatOpen(false)} />
-            </aside>
-          </>,
+          <ChatOverlay onClose={() => setChatOpen(false)} variant="page" />,
           document.body,
         )}
     </div>
