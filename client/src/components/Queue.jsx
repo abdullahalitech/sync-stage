@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ListVideo,
   Plus,
@@ -8,6 +8,7 @@ import {
   Music2,
   ArrowBigUp,
   ArrowBigDown,
+  Upload,
 } from 'lucide-react';
 import { useRoom } from '../context/RoomContext.jsx';
 import {
@@ -16,6 +17,7 @@ import {
   fetchMediaMetadata,
   defaultMediaTitle,
 } from '../lib/media.js';
+import { uploadMediaFile, isAllowedUploadFile } from '../lib/upload.js';
 
 export default function Queue() {
   const {
@@ -31,7 +33,10 @@ export default function Queue() {
   } = useRoom();
   const [input, setInput] = useState('');
   const [adding, setAdding] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadPct, setUploadPct] = useState(0);
   const [localError, setLocalError] = useState('');
+  const fileRef = useRef(null);
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -52,6 +57,32 @@ export default function Queue() {
     setAdding(false);
     setInput('');
   };
+
+  const handleFilePick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setLocalError('');
+    if (!isAllowedUploadFile(file)) {
+      setLocalError('Unsupported file. Use MP4, WebM, MOV, MKV, MP3, WAV, etc.');
+      return;
+    }
+
+    setUploading(true);
+    setUploadPct(0);
+    try {
+      const video = await uploadMediaFile(file, { onProgress: setUploadPct });
+      addToQueue(video);
+    } catch (err) {
+      setLocalError(err?.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+      setUploadPct(0);
+    }
+  };
+
+  const busy = adding || uploading;
 
   const myVote = (video) => {
     if (video.upvotes?.includes(you?.id)) return 'up';
@@ -74,24 +105,53 @@ export default function Queue() {
         </span>
       </div>
 
-      <form onSubmit={handleAdd} className="flex gap-2 p-4">
+      <form onSubmit={handleAdd} className="flex flex-col gap-2 p-4">
+        <div className="flex gap-2">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Paste a video URL or upload a file below…"
+            disabled={busy}
+            className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-violet-500/70 disabled:opacity-60"
+          />
+          <button
+            type="submit"
+            disabled={busy}
+            className="flex items-center gap-1 rounded-xl bg-violet-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-violet-500 disabled:opacity-60"
+          >
+            {adding ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="h-4 w-4" />
+            )}
+            Add
+          </button>
+        </div>
+
         <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Paste a video URL (YouTube, Vimeo, Twitch VOD/channel…)"
-          className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-violet-500/70"
+          ref={fileRef}
+          type="file"
+          accept="video/*,audio/*,.mp4,.webm,.mkv,.mov,.m4v,.mp3,.wav,.m4a,.aac"
+          className="hidden"
+          onChange={handleFilePick}
         />
         <button
-          type="submit"
-          disabled={adding}
-          className="flex items-center gap-1 rounded-xl bg-violet-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-violet-500 disabled:opacity-60"
+          type="button"
+          disabled={busy}
+          onClick={() => fileRef.current?.click()}
+          className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-white/[0.02] px-3 py-2.5 text-sm text-white/70 transition hover:border-violet-500/40 hover:bg-white/[0.04] hover:text-white disabled:opacity-60"
         >
-          {adding ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
+          {uploading ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Uploading… {uploadPct}%
+            </>
           ) : (
-            <Plus className="h-4 w-4" />
+            <>
+              <Upload className="h-4 w-4" />
+              Upload video or audio file
+            </>
           )}
-          Add
         </button>
       </form>
 

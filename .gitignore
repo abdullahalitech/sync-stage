@@ -21,3 +21,6 @@ npm-debug.log*
 .vscode/
 .idea/
 Thumbs.db
+
+# User-uploaded media (server/uploads)
+server/uploads/

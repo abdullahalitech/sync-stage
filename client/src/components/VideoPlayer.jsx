@@ -328,8 +328,8 @@ export default function VideoPlayer({
         <Radio className="mb-3 h-10 w-10 text-white/30" />
         <p className="text-lg font-medium text-white/70">Nothing playing yet</p>
         <p className="mt-1 max-w-sm text-sm text-white/40">
-          Paste a video link in the queue below to start the show (YouTube,
-          Vimeo, SoundCloud, and more). The first track begins automatically.
+          Paste a link or upload a file in the queue below to start the show.
+          The first track begins automatically.
         </p>
       </div>
     );

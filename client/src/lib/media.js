@@ -45,7 +45,13 @@ export function isTwitchVodUrl(input) {
   return TWITCH_VIDEO.test(url);
 }
 
+export function isUploadedMediaUrl(input) {
+  const url = normalizeMediaUrl(input) || input || '';
+  return /\/api\/media\//i.test(url);
+}
+
 function canPlayViaPatterns(url) {
+  if (isUploadedMediaUrl(url)) return true;
   if (TWITCH_VIDEO.test(url) || TWITCH_CHANNEL.test(url)) return true;
   return typeof ReactPlayer.canPlay === 'function' && ReactPlayer.canPlay(url);
 }

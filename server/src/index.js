@@ -7,6 +7,12 @@ import { env } from './config/env.js';
 import { connectDatabase } from './config/db.js';
 import { initSocket } from './socket/index.js';
 import { roomStore } from './lib/roomStore.js';
+import {
+  UPLOAD_DIR,
+  uploadMiddleware,
+  publicMediaPath,
+  MAX_UPLOAD_MB,
+} from './lib/upload.js';
 
 async function bootstrap() {
   const app = express();
@@ -37,7 +43,44 @@ async function bootstrap() {
     });
   });
 
+  // Uploaded media files (MP4, WebM, etc.) — served with range support for seeking.
+  app.use(
+    '/api/media',
+    express.static(UPLOAD_DIR, {
+      setHeaders: (res) => {
+        res.set('Accept-Ranges', 'bytes');
+        res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+      },
+    }),
+  );
+
+  app.post('/api/upload', (req, res) => {
+    uploadMiddleware.single('file')(req, res, (err) => {
+      if (err) {
+        const message =
+          err.code === 'LIMIT_FILE_SIZE'
+            ? `File too large (max ${MAX_UPLOAD_MB} MB)`
+            : err.message || 'Upload failed';
+        return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
+          ok: false,
+          error: message,
+        });
+      }
+      if (!req.file) {
+        return res.status(400).json({ ok: false, error: 'No file uploaded' });
+      }
+      return res.json({
+        ok: true,
+        url: publicMediaPath(req.file.filename),
+        title: req.file.originalname,
+        thumbnail: '',
+      });
+    });
+  });
+
   const server = http.createServer(app);
+  // Large uploads (up to 5 GB) can take a while on slow connections.
+  server.requestTimeout = 0;
   initSocket(server);
 
   // Self-hosted PeerJS broker for the WebRTC voice stage. It is mounted on the
