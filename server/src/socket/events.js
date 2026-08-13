@@ -78,4 +78,5 @@ export const EVENTS = {
   SCREEN_SHARE_UPDATED: 'screen:updated',
   SCREEN_SHARE_VIEWER_JOIN: 'screen:viewer-join',
   SCREEN_SHARE_VIEWER_READY: 'screen:viewer-ready',
+  SCREEN_SHARE_REQUEST_VIEWERS: 'screen:request-viewers',
 };
