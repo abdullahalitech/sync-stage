@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Peer from 'peerjs';
 import { socket } from '../lib/socket.js';
 import { EVENTS } from '../lib/events.js';
-import { getPeerOptions } from '../lib/peerClient.js';
+import { getScreenPeerOptions } from '../lib/peerClient.js';
+import {
+  answerScreenCall,
+  formatScreenShareError,
+  getScreenCaptureStream,
+} from '../lib/screenMedia.js';
 
 /** Build a MediaStream from collected tracks. */
 function streamFromTracks(tracks) {
@@ -120,6 +125,17 @@ export function useScreenShare(you, activeSharer) {
     [cleanupShare],
   );
 
+  const peerErrorMessage = useCallback((err) => {
+    const type = err?.type || err?.message || '';
+    if (type.includes('browser') || type.includes('disconnected')) {
+      return 'Connection lost. Check Wi‑Fi / VPN and try again.';
+    }
+    if (type.includes('network') || type.includes('socket')) {
+      return 'Could not reach the screen-share relay. Use HTTPS and check your network.';
+    }
+    return formatScreenShareError(err) || 'Could not connect to the screen-share relay.';
+  }, []);
+
   const callViewer = useCallback((viewerPeerId, userId) => {
     if (!amActiveSharer()) return;
 
@@ -165,14 +181,7 @@ export function useScreenShare(you, activeSharer) {
     viewerCallsRef.current.clear();
 
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 30 },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          suppressLocalAudioPlayback: false,
-        },
-      });
+      const stream = await getScreenCaptureStream();
       screenStreamRef.current = stream;
       setLocalStream(stream);
 
@@ -181,7 +190,7 @@ export function useScreenShare(you, activeSharer) {
         track.onended = () => stopShare();
       }
 
-      const peer = new Peer(undefined, getPeerOptions());
+      const peer = new Peer(undefined, getScreenPeerOptions());
       peerRef.current = peer;
 
       const ackTimer = setTimeout(() => {
@@ -205,7 +214,7 @@ export function useScreenShare(you, activeSharer) {
       peer.on('error', (err) => {
         clearTimeout(ackTimer);
         console.warn('[screen] peer error:', err?.type || err?.message);
-        failStart('Could not connect to the screen-share relay. Restart the server.');
+        failStart(peerErrorMessage(err));
       });
 
       peer.on('disconnected', () => {
@@ -213,14 +222,10 @@ export function useScreenShare(you, activeSharer) {
       });
     } catch (err) {
       isSharerRef.current = false;
-      setScreenError(
-        err?.name === 'NotAllowedError'
-          ? 'Screen share permission denied.'
-          : 'Could not share your screen.',
-      );
+      setScreenError(formatScreenShareError(err));
       cleanupShare();
     }
-  }, [sharing, starting, stopShare, cleanupShare, failStart, flushPendingViewers]);
+  }, [sharing, starting, stopShare, cleanupShare, failStart, flushPendingViewers, peerErrorMessage]);
 
   const enableRemoteAudio = useCallback(() => {
     setAudioBlocked(false);
@@ -276,7 +281,7 @@ export function useScreenShare(you, activeSharer) {
       setAudioBlocked(stream.getAudioTracks().length > 0);
     };
 
-    const peer = new Peer(undefined, getPeerOptions());
+    const peer = new Peer(undefined, getScreenPeerOptions());
     peerRef.current = peer;
 
     peer.on('call', (call) => {
@@ -293,7 +298,7 @@ export function useScreenShare(you, activeSharer) {
       });
       call.on('track', onTrack);
 
-      call.answer(new MediaStream());
+      answerScreenCall(call);
       viewerCallRef.current = call;
       call.on('close', cleanupView);
       call.on('error', () => {
@@ -312,7 +317,7 @@ export function useScreenShare(you, activeSharer) {
 
     peer.on('error', (err) => {
       console.warn('[screen] viewer peer error:', err?.type || err?.message);
-      setScreenError('Could not connect to the screen share.');
+      setScreenError(peerErrorMessage(err));
     });
 
     peer.on('disconnected', () => {
@@ -334,6 +339,7 @@ export function useScreenShare(you, activeSharer) {
     cleanupView,
     destroyPeer,
     viewerGeneration,
+    peerErrorMessage,
   ]);
 
   // Sharer: call viewers when they register.
