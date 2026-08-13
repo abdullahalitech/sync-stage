@@ -11,6 +11,7 @@ import {
   SkipForward,
   Pin,
   PinOff,
+  X,
 } from 'lucide-react';
 import { useRoom } from '../context/RoomContext.jsx';
 import { usePictureInPicture } from '../hooks/usePictureInPicture.js';
@@ -20,6 +21,11 @@ import ChatOverlay from './ChatOverlay.jsx';
 import Heatmap from './Heatmap.jsx';
 
 const TIMED_EMOJIS = ['❤️', '🔥', '🚀', '😂', '👏', '🎉'];
+const PIN_MERGE_SECONDS = 3;
+
+function makePinId() {
+  return `pin-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+}
 
 /** Map internal sync state -> badge label + color. */
 const SYNC_META = {
@@ -66,18 +72,20 @@ export default function VideoPlayer({
   const [playedSeconds, setPlayedSeconds] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [syncStatus, setSyncStatus] = useState('idle');
-  const [pinnedTime, setPinnedTime] = useState(false);
-  const [reactionTargetSeconds, setReactionTargetSeconds] = useState(0);
+  const [pins, setPins] = useState([]); // { id, seconds }[]
+  const [activePinId, setActivePinId] = useState(null); // null = live mode
   const [timeInput, setTimeInput] = useState('0:00');
 
   const lastAppliedToken = useRef(0);
   const suppressEvents = useRef(false);
   const playbackRef = useRef(playback);
-  const pinnedTimeRef = useRef(false);
-  const reactionTargetRef = useRef(0);
+  const pinsRef = useRef([]);
+  const activePinIdRef = useRef(null);
   playbackRef.current = playback;
-  pinnedTimeRef.current = pinnedTime;
-  reactionTargetRef.current = reactionTargetSeconds;
+  pinsRef.current = pins;
+  activePinIdRef.current = activePinId;
+
+  const activePin = pins.find((p) => p.id === activePinId) || null;
 
   const { isPiP, available: pipAvailable, toggle: togglePiP } = usePictureInPicture(
     playerRef,
@@ -116,18 +124,22 @@ export default function VideoPlayer({
     setDuration(0);
     setPlayedSeconds(0);
     setPlaybackRate(1);
-    setPinnedTime(false);
-    setReactionTargetSeconds(0);
+    setPins([]);
+    setActivePinId(null);
     setTimeInput('0:00');
     if (isHost) setHostPlaying(true);
   }, [url, isHost]);
 
-  // Keep live reaction target in sync with playback when not pinned.
+  // Keep time input synced with active target (live or selected pin).
   useEffect(() => {
-    if (pinnedTime) return;
-    setReactionTargetSeconds(playedSeconds);
+    if (activePinId) return;
     setTimeInput(formatTimestamp(playedSeconds));
-  }, [playedSeconds, pinnedTime]);
+  }, [playedSeconds, activePinId]);
+
+  useEffect(() => {
+    if (!activePin) return;
+    setTimeInput(formatTimestamp(activePin.seconds));
+  }, [activePin?.id, activePin?.seconds]);
 
   // Immediate coarse correction on every play/pause/seek event (followers only).
   useEffect(() => {
@@ -204,12 +216,42 @@ export default function VideoPlayer({
     if (canControl) emitEnded();
   };
 
-  const handlePickTimestamp = (seconds) => {
+  const addPin = (seconds) => {
     const maxTime = duration || playerRef.current?.getDuration?.() || seconds;
     const clamped = Math.max(0, Math.min(seconds, maxTime));
-    setPinnedTime(true);
-    setReactionTargetSeconds(clamped);
+
+    const existing = pinsRef.current.find(
+      (p) => Math.abs(p.seconds - clamped) <= PIN_MERGE_SECONDS,
+    );
+    if (existing) {
+      setActivePinId(existing.id);
+      setTimeInput(formatTimestamp(existing.seconds));
+      return;
+    }
+
+    const pin = { id: makePinId(), seconds: clamped };
+    setPins((prev) => [...prev, pin]);
+    setActivePinId(pin.id);
     setTimeInput(formatTimestamp(clamped));
+  };
+
+  const selectPin = (id) => {
+    setActivePinId(id);
+    const pin = pinsRef.current.find((p) => p.id === id);
+    if (pin) setTimeInput(formatTimestamp(pin.seconds));
+  };
+
+  const removePin = (id) => {
+    const next = pinsRef.current.filter((p) => p.id !== id);
+    setPins(next);
+    setActivePinId((current) => {
+      if (current !== id) return current;
+      return next[0]?.id ?? null;
+    });
+  };
+
+  const handlePickTimestamp = (seconds) => {
+    addPin(seconds);
   };
 
   const handleTimeInputChange = (value) => {
@@ -217,32 +259,35 @@ export default function VideoPlayer({
     const maxTime = duration || playerRef.current?.getDuration?.() || Infinity;
     const parsed = parseTimestamp(value);
     const clamped = Math.max(0, Math.min(parsed, maxTime));
-    setReactionTargetSeconds(clamped);
-    setPinnedTime(true);
+
+    if (activePinId) {
+      setPins((prev) =>
+        prev.map((p) => (p.id === activePinId ? { ...p, seconds: clamped } : p)),
+      );
+      return;
+    }
+
+    addPin(clamped);
   };
 
   const pinCurrentTime = () => {
-    const at = getLiveSeconds();
-    setPinnedTime(true);
-    setReactionTargetSeconds(at);
-    setTimeInput(formatTimestamp(at));
+    addPin(getLiveSeconds());
   };
 
   const useLiveTime = () => {
-    const at = getLiveSeconds();
-    setPinnedTime(false);
-    setReactionTargetSeconds(at);
-    setTimeInput(formatTimestamp(at));
+    setActivePinId(null);
+    setTimeInput(formatTimestamp(getLiveSeconds()));
   };
 
   const sendReactionAtTarget = (emoji) => {
-    const seconds = pinnedTimeRef.current
-      ? reactionTargetRef.current
-      : getLiveSeconds();
+    const active = activePinIdRef.current
+      ? pinsRef.current.find((p) => p.id === activePinIdRef.current)
+      : null;
+    const seconds = active ? active.seconds : getLiveSeconds();
     sendTimestampedReaction(emoji, seconds);
   };
 
-  const reactionPreviewSeconds = pinnedTime ? reactionTargetSeconds : getLiveSeconds();
+  const reactionPreviewSeconds = activePin ? activePin.seconds : getLiveSeconds();
 
   const playing = isHost ? hostPlaying : playback.isPlaying;
   const effectiveRate = isHost ? 1 : playbackRate;
@@ -416,44 +461,85 @@ export default function VideoPlayer({
       )}
 
       {/* Timestamped reaction bar */}
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+      <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="pl-1 text-xs text-white/40">
-            {pinnedTime
-              ? `React at ${formatTimestamp(reactionTargetSeconds)}`
+            {activePin
+              ? `React at ${formatTimestamp(activePin.seconds)}`
               : 'React at now (live)'}
           </span>
           <input
             type="text"
             value={timeInput}
             onChange={(e) => handleTimeInputChange(e.target.value)}
-            onBlur={() => setTimeInput(formatTimestamp(reactionTargetSeconds))}
+            onBlur={() => {
+              if (activePin) {
+                setTimeInput(formatTimestamp(activePin.seconds));
+              } else {
+                setTimeInput(formatTimestamp(getLiveSeconds()));
+              }
+            }}
             placeholder="m:ss"
             className="w-16 rounded-lg border border-white/10 bg-black/30 px-2 py-1 text-xs text-white outline-none focus:border-violet-500/70"
             title="Reaction timestamp (m:ss)"
           />
           <button
             type="button"
-            onClick={pinnedTime ? useLiveTime : pinCurrentTime}
-            className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition ${
-              pinnedTime
-                ? 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
-                : 'bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25'
-            }`}
-            title={pinnedTime ? 'Follow live playback' : 'Pin current time'}
+            onClick={pinCurrentTime}
+            className="flex items-center gap-1 rounded-lg bg-emerald-500/15 px-2 py-1 text-xs text-emerald-300 transition hover:bg-emerald-500/25"
+            title="Add pin at current playback time"
           >
-            {pinnedTime ? (
-              <>
-                <PinOff className="h-3 w-3" /> Now
-              </>
-            ) : (
-              <>
-                <Pin className="h-3 w-3" /> Pin
-              </>
-            )}
+            <Pin className="h-3 w-3" /> Pin
+          </button>
+          <button
+            type="button"
+            onClick={useLiveTime}
+            disabled={!activePinId}
+            className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition ${
+              activePinId
+                ? 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+                : 'cursor-not-allowed bg-white/5 text-white/30'
+            }`}
+            title="Use live playback for reactions (pins stay on timeline)"
+          >
+            <PinOff className="h-3 w-3" /> Now
           </button>
         </div>
-        <div className="flex gap-1">
+
+        {pins.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 px-1">
+            <span className="text-[10px] uppercase tracking-wide text-white/35">Pins</span>
+            {pins.map((pin) => (
+              <div
+                key={pin.id}
+                className={`flex items-center gap-0.5 rounded-lg border text-xs transition ${
+                  pin.id === activePinId
+                    ? 'border-amber-400/50 bg-amber-500/15 text-amber-200'
+                    : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => selectPin(pin.id)}
+                  className="px-2 py-1 font-mono"
+                  title={`React at ${formatTimestamp(pin.seconds)}`}
+                >
+                  {formatTimestamp(pin.seconds)}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removePin(pin.id)}
+                  className="rounded-r-lg px-1 py-1 text-white/40 hover:bg-white/10 hover:text-white"
+                  title="Remove pin"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-1">
           {TIMED_EMOJIS.map((emoji) => (
             <button
               key={emoji}
@@ -473,8 +559,10 @@ export default function VideoPlayer({
         timedReactions={timedReactions}
         duration={duration}
         playedSeconds={playedSeconds}
-        pickedSeconds={pinnedTime ? reactionTargetSeconds : null}
+        pins={pins}
+        activePinId={activePinId}
         onPickTimestamp={handlePickTimestamp}
+        onSelectPin={selectPin}
       />
     </div>
   );

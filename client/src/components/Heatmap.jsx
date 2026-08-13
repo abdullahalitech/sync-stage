@@ -11,22 +11,21 @@ function formatBucketTime(idx) {
 }
 
 /**
- * Engagement heatmap: groups timestamped reactions into 10s buckets and draws a
- * YouTube-style "peak interest" bar. Clicking a bucket seeks there (controllers)
- * or picks a reaction timestamp when pickMode is enabled.
+ * Engagement heatmap with multi-pin markers on the timeline.
  *
  * @param {{ timedReactions: {timestamp:number, emoji:string}[], duration:number,
- *   playedSeconds:number, pickedSeconds?:number|null,
- *   onPickTimestamp:(s:number)=>void }} props
+ *   playedSeconds:number, pins?: {id:string, seconds:number}[], activePinId?:string|null,
+ *   onPickTimestamp:(s:number)=>void, onSelectPin?:(id:string)=>void }} props
  */
 export default function Heatmap({
   timedReactions = [],
   duration = 0,
   playedSeconds = 0,
-  pickedSeconds = null,
+  pins = [],
+  activePinId = null,
   onPickTimestamp,
+  onSelectPin,
 }) {
-  // YouTube sometimes delays onDuration; fall back so buckets stay interactive.
   const effectiveDuration = Math.max(duration || 0, playedSeconds || 0, 1);
 
   const { buckets, max } = useMemo(() => {
@@ -40,10 +39,6 @@ export default function Heatmap({
   }, [timedReactions, effectiveDuration]);
 
   const progress = Math.min(100, (playedSeconds / effectiveDuration) * 100);
-  const pickedProgress =
-    pickedSeconds != null
-      ? Math.min(100, (pickedSeconds / effectiveDuration) * 100)
-      : null;
 
   const handleBucketClick = (idx) => {
     const seconds = Math.min(
@@ -59,7 +54,7 @@ export default function Heatmap({
         <Activity className="h-3.5 w-3.5 text-fuchsia-400" />
         Engagement heatmap
         <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-violet-300">
-          Click to pick time
+          Click to add pin
         </span>
         <span className="ml-auto">{timedReactions.length} reactions</span>
       </div>
@@ -72,7 +67,7 @@ export default function Heatmap({
               key={i}
               type="button"
               onClick={() => handleBucketClick(i)}
-              title={`${count} reaction${count === 1 ? '' : 's'} · pick ${formatBucketTime(i)}`}
+              title={`${count} reaction${count === 1 ? '' : 's'} · add pin at ${formatBucketTime(i)}`}
               className="group relative flex-1 cursor-pointer rounded-sm transition-all hover:brightness-125"
               style={{
                 height: `${Math.max(6, intensity * 100)}%`,
@@ -82,17 +77,32 @@ export default function Heatmap({
           );
         })}
 
-        {/* Pinned reaction timestamp marker */}
-        {pickedProgress != null && (
-          <div
-            className="pointer-events-none absolute top-0 bottom-0 w-[2px] bg-amber-400 shadow"
-            style={{ left: `${pickedProgress}%` }}
-          />
-        )}
+        {/* All pin markers — persist until removed */}
+        {pins.map((pin) => {
+          const left = Math.min(100, (pin.seconds / effectiveDuration) * 100);
+          const isActive = pin.id === activePinId;
+          return (
+            <button
+              key={pin.id}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectPin?.(pin.id);
+              }}
+              title={`Pin at ${formatBucketTime(Math.floor(pin.seconds / BUCKET_SECONDS))} — click to select`}
+              className={`absolute top-0 z-10 h-full w-2 -translate-x-1/2 rounded-full transition ${
+                isActive
+                  ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)] ring-2 ring-amber-200/80'
+                  : 'bg-amber-400/70 hover:bg-amber-400'
+              }`}
+              style={{ left: `${left}%` }}
+            />
+          );
+        })}
 
         {/* Playhead */}
         <div
-          className="pointer-events-none absolute top-0 bottom-0 w-[2px] bg-white/80 shadow"
+          className="pointer-events-none absolute top-0 bottom-0 z-[5] w-[2px] bg-white/80 shadow"
           style={{ left: `${progress}%` }}
         />
       </div>
