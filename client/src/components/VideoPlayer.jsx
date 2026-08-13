@@ -106,9 +106,12 @@ export default function VideoPlayer({
     starting: shareStarting,
     screenError,
     isSharer,
+    isViewer,
     activeSharer,
     displayStream,
     screenVisible,
+    audioBlocked,
+    enableRemoteAudio,
     startShare,
     stopShare,
   } = useScreenShare(you, screenShare);
@@ -118,13 +121,33 @@ export default function VideoPlayer({
   useEffect(() => {
     const el = screenVideoRef.current;
     if (!el) return;
+
     el.srcObject = displayStream || null;
-    // Mute local preview only; viewers should hear shared tab/system audio.
-    el.muted = isSharer;
-    if (displayStream) {
-      el.play().catch(() => {});
-    }
-  }, [displayStream, isSharer]);
+    if (!displayStream) return;
+
+    // Browsers block unmuted autoplay — start muted so video frames render, then unmute.
+    el.muted = true;
+    const tryPlay = () => {
+      el.play()
+        .then(() => {
+          if (!isSharer && displayStream.getAudioTracks().length > 0) {
+            el.muted = false;
+            enableRemoteAudio();
+          }
+        })
+        .catch(() => {
+          el.muted = true;
+          el.play().catch(() => {});
+        });
+    };
+
+    if (el.readyState >= 1) tryPlay();
+    else el.onloadedmetadata = tryPlay;
+
+    return () => {
+      el.onloadedmetadata = null;
+    };
+  }, [displayStream, isSharer, enableRemoteAudio]);
 
   useEffect(() => {
     onFullscreenChange?.(isFullscreen);
@@ -394,7 +417,7 @@ export default function VideoPlayer({
           isFullscreen ? 'rounded-none' : 'rounded-2xl'
         }`}
       >
-        {url && (
+        {url && !(screenActive && displayStream) && (
           <ReactPlayer
             ref={playerRef}
             url={url}
@@ -403,7 +426,6 @@ export default function VideoPlayer({
             playbackRate={effectiveRate}
             width="100%"
             height="100%"
-            style={screenActive ? { visibility: 'hidden', position: 'absolute', inset: 0 } : undefined}
             onReady={handleReady}
             onPlay={onPlay}
             onPause={onPause}
@@ -421,13 +443,31 @@ export default function VideoPlayer({
 
         {screenActive && (
           displayStream ? (
-            <video
-              ref={screenVideoRef}
-              autoPlay
-              playsInline
-              muted={isSharer}
-              className="absolute inset-0 h-full w-full bg-black object-contain"
-            />
+            <>
+              <video
+                ref={screenVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="absolute inset-0 z-[25] h-full w-full bg-black object-contain"
+              />
+              {isViewer && audioBlocked && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    enableRemoteAudio();
+                    const el = screenVideoRef.current;
+                    if (el) {
+                      el.muted = false;
+                      el.play().catch(() => {});
+                    }
+                  }}
+                  className="absolute bottom-4 left-1/2 z-[26] -translate-x-1/2 rounded-full bg-black/70 px-4 py-2 text-xs text-white backdrop-blur transition hover:bg-black/90"
+                >
+                  Tap for sound
+                </button>
+              )}
+            </>
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-black text-center">
               <Monitor className="mb-3 h-10 w-10 animate-pulse text-cyan-400/60" />

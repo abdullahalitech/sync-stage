@@ -4,9 +4,17 @@ import { socket } from '../lib/socket.js';
 import { EVENTS } from '../lib/events.js';
 import { getPeerOptions } from '../lib/peerClient.js';
 
+/** Apply a MediaStream to state, merging any tracks received separately. */
+function streamFromTracks(tracks) {
+  const stream = new MediaStream();
+  tracks.forEach((t) => {
+    if (t && t.readyState !== 'ended') stream.addTrack(t);
+  });
+  return stream.getTracks().length ? stream : null;
+}
+
 /**
  * WebRTC screen sharing — sharer pushes stream to viewers via PeerJS.
- * Viewers register a peer id; the sharer calls each viewer (reliable one-way).
  *
  * @param {{ id: string } | null} you
  * @param {{ userId: string, userName: string, peerId: string } | null} activeSharer
@@ -17,14 +25,17 @@ export function useScreenShare(you, activeSharer) {
   const [screenError, setScreenError] = useState('');
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
+  const [audioBlocked, setAudioBlocked] = useState(false);
 
   const peerRef = useRef(null);
   const screenStreamRef = useRef(null);
   const viewerCallRef = useRef(null);
-  const viewerCallsRef = useRef(new Map()); // viewerPeerId -> call
-  const pendingViewersRef = useRef([]); // { peerId, userId }[]
+  const viewerCallsRef = useRef(new Map());
+  const pendingViewersRef = useRef([]);
   const isSharerRef = useRef(false);
   const connectTimerRef = useRef(null);
+  const joinRetryRef = useRef(null);
+  const viewerSessionRef = useRef('');
 
   const isLocalSharer = !!you?.id && activeSharer?.userId === you.id;
   const isViewer =
@@ -32,6 +43,13 @@ export function useScreenShare(you, activeSharer) {
 
   const stopTracks = (stream) => {
     stream?.getTracks?.().forEach((t) => t.stop());
+  };
+
+  const clearJoinRetry = () => {
+    if (joinRetryRef.current) {
+      clearInterval(joinRetryRef.current);
+      joinRetryRef.current = null;
+    }
   };
 
   const destroyPeer = useCallback(() => {
@@ -50,6 +68,8 @@ export function useScreenShare(you, activeSharer) {
 
   const cleanupShare = useCallback(() => {
     isSharerRef.current = false;
+    viewerSessionRef.current = '';
+    clearJoinRetry();
     destroyPeer();
     stopTracks(screenStreamRef.current);
     screenStreamRef.current = null;
@@ -59,6 +79,8 @@ export function useScreenShare(you, activeSharer) {
   }, [destroyPeer]);
 
   const cleanupView = useCallback(() => {
+    viewerSessionRef.current = '';
+    clearJoinRetry();
     if (connectTimerRef.current) {
       clearTimeout(connectTimerRef.current);
       connectTimerRef.current = null;
@@ -68,6 +90,7 @@ export function useScreenShare(you, activeSharer) {
       viewerCallRef.current = null;
     }
     setRemoteStream(null);
+    setAudioBlocked(false);
   }, []);
 
   const stopShare = useCallback(() => {
@@ -170,27 +193,59 @@ export function useScreenShare(you, activeSharer) {
     }
   }, [sharing, starting, stopShare, cleanupShare, failStart, flushPendingViewers]);
 
-  const joinAsViewer = useCallback(() => {
-    if (!activeSharer?.peerId || !you?.id) return;
-    if (activeSharer.userId === you.id) return;
+  const enableRemoteAudio = useCallback(() => {
+    setAudioBlocked(false);
+  }, []);
 
+  // Viewers: register peer and wait for sharer to call.
+  useEffect(() => {
+    if (!activeSharer?.peerId || !you?.id) return undefined;
+    if (activeSharer.userId === you.id) return undefined;
+
+    const sessionKey = `${activeSharer.userId}:${activeSharer.peerId}`;
+    if (viewerSessionRef.current === sessionKey && peerRef.current) {
+      return undefined;
+    }
+
+    viewerSessionRef.current = sessionKey;
     cleanupView();
     destroyPeer();
+
+    const receivedTracks = [];
+    const applyRemoteStream = () => {
+      const stream = streamFromTracks(receivedTracks);
+      if (!stream) return;
+      if (connectTimerRef.current) {
+        clearTimeout(connectTimerRef.current);
+        connectTimerRef.current = null;
+      }
+      clearJoinRetry();
+      setRemoteStream(stream);
+      setScreenError('');
+      setAudioBlocked(stream.getAudioTracks().length > 0);
+    };
 
     const peer = new Peer(undefined, getPeerOptions());
     peerRef.current = peer;
 
     peer.on('call', (call) => {
-      call.answer();
-      viewerCallRef.current = call;
+      const onTrack = (track) => {
+        const idx = receivedTracks.findIndex((t) => t.id === track.id);
+        if (idx >= 0) receivedTracks[idx] = track;
+        else receivedTracks.push(track);
+        applyRemoteStream();
+      };
+
       call.on('stream', (stream) => {
-        if (connectTimerRef.current) {
-          clearTimeout(connectTimerRef.current);
-          connectTimerRef.current = null;
-        }
-        setRemoteStream(stream);
-        setScreenError('');
+        stream.getTracks().forEach(onTrack);
+        applyRemoteStream();
       });
+      if (typeof call.on === 'function') {
+        call.on('track', onTrack);
+      }
+
+      call.answer(new MediaStream());
+      viewerCallRef.current = call;
       call.on('close', cleanupView);
       call.on('error', () => {
         setScreenError('Lost connection to the screen share.');
@@ -198,8 +253,13 @@ export function useScreenShare(you, activeSharer) {
       });
     });
 
-    peer.on('open', (id) => {
-      socket.emit(EVENTS.SCREEN_SHARE_VIEWER_JOIN, { peerId: id });
+    peer.on('open', (peerId) => {
+      const announce = () => {
+        socket.emit(EVENTS.SCREEN_SHARE_VIEWER_JOIN, { peerId });
+      };
+      announce();
+      joinRetryRef.current = setInterval(announce, 4000);
+
       connectTimerRef.current = setTimeout(() => {
         setScreenError('Screen share is taking longer than expected…');
       }, 20000);
@@ -213,9 +273,17 @@ export function useScreenShare(you, activeSharer) {
     peer.on('disconnected', () => {
       if (!peer.destroyed) peer.reconnect();
     });
-  }, [activeSharer?.peerId, activeSharer?.userId, you?.id, cleanupView, destroyPeer]);
 
-  // Sharer: call viewers when they register (listen always; gate on isSharerRef).
+    return () => {
+      if (viewerSessionRef.current === sessionKey) {
+        viewerSessionRef.current = '';
+        cleanupView();
+        destroyPeer();
+      }
+    };
+  }, [activeSharer?.userId, activeSharer?.peerId, you?.id, cleanupView, destroyPeer]);
+
+  // Sharer: call viewers when they register.
   useEffect(() => {
     const onViewerReady = ({ peerId, userId }) => {
       if (!isSharerRef.current) return;
@@ -226,25 +294,14 @@ export function useScreenShare(you, activeSharer) {
     return () => socket.off(EVENTS.SCREEN_SHARE_VIEWER_READY, onViewerReady);
   }, [callViewer]);
 
-  // Viewers: register and wait for the sharer to call them.
+  // Stop viewer peer when share ends.
   useEffect(() => {
-    if (!activeSharer?.peerId) {
-      cleanupView();
-      if (!isSharerRef.current) destroyPeer();
-      return;
-    }
-    if (activeSharer.userId === you?.id) return;
-    joinAsViewer();
-  }, [
-    activeSharer?.userId,
-    activeSharer?.peerId,
-    you?.id,
-    joinAsViewer,
-    cleanupView,
-    destroyPeer,
-  ]);
+    if (activeSharer?.peerId) return;
+    cleanupView();
+    if (!isSharerRef.current) destroyPeer();
+  }, [activeSharer?.peerId, cleanupView, destroyPeer]);
 
-  // Server ended our share (stop, disconnect, or kicked).
+  // Server ended our share.
   const wasActiveSharerRef = useRef(false);
   useEffect(() => {
     if (you?.id && activeSharer?.userId === you.id) {
@@ -268,7 +325,7 @@ export function useScreenShare(you, activeSharer) {
   );
 
   const showLocal = isLocalSharer || (starting && !!localStream);
-  const displayStream = showLocal ? localStream : isViewer ? remoteStream : null;
+  const displayStream = showLocal ? localStream : remoteStream;
   const screenVisible = !!activeSharer || showLocal;
 
   return {
@@ -280,6 +337,8 @@ export function useScreenShare(you, activeSharer) {
     activeSharer,
     displayStream,
     screenVisible,
+    audioBlocked,
+    enableRemoteAudio,
     startShare,
     stopShare,
   };
